@@ -1,0 +1,7 @@
+stage,seconds
+stream_filter_and_daily_aggregation,11.709
+profile_features,6.469
+cluster_selection,0.12
+stability_and_ablation,0.25
+charts,1.032
+total_seconds,20.873

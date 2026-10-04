@@ -1,0 +1,6 @@
+stage,seconds
+read_and_features,2.637
+train_and_evaluate_models,7.124
+historical_rolling_backtests,3.528
+charts,0.965
+total_seconds,15.111

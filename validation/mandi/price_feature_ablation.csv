@@ -1,0 +1,3 @@
+feature_set,k,silhouette,ARI_vs_main
+behavior only: main model,2,0.43789995390929404,1.0
+behavior plus log mean price,2,0.39526507336028205,0.9380296686334889

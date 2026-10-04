@@ -1,0 +1,2 @@
+check,ARI_vs_main,silhouette,smallest_cluster
+without 1st/99th percentile profile winsorization,0.012249735604078528,0.9778651012206084,2

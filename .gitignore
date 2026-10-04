@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+*_results/
+*_results.zip
+validation_data/
+filtered_batches/
+*.joblib

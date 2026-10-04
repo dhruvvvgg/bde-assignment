@@ -1,0 +1,26 @@
+check,seed,adjusted_rand_index
+different initialization,7,0.8424278102151108
+different initialization,21,0.9791026698030455
+different initialization,84,0.9721608971866269
+different initialization,123,0.9721608971866269
+different initialization,2026,0.8424278102151108
+80% profile subsample; fixed preprocessing,0,0.8491581831306336
+80% profile subsample; fixed preprocessing,1,0.8491581831306336
+80% profile subsample; fixed preprocessing,2,0.8965663315130316
+80% profile subsample; fixed preprocessing,3,0.8424278102151108
+80% profile subsample; fixed preprocessing,4,0.8664997963137006
+80% profile subsample; fixed preprocessing,5,0.8728711084169379
+80% profile subsample; fixed preprocessing,6,0.9033821199454627
+80% profile subsample; fixed preprocessing,7,0.8424278102151108
+80% profile subsample; fixed preprocessing,8,0.9652866350238539
+80% profile subsample; fixed preprocessing,9,0.8792733572183437
+80% profile subsample; fixed preprocessing,10,0.9721608971866269
+80% profile subsample; fixed preprocessing,11,0.8924708256997724
+80% profile subsample; fixed preprocessing,12,0.8477712375620727
+80% profile subsample; fixed preprocessing,13,0.9721608971866269
+80% profile subsample; fixed preprocessing,14,0.8860215415488115
+80% profile subsample; fixed preprocessing,15,0.9238960726289764
+80% profile subsample; fixed preprocessing,16,0.8357077485961637
+80% profile subsample; fixed preprocessing,17,0.8924708256997724
+80% profile subsample; fixed preprocessing,18,0.8694119812779242
+80% profile subsample; fixed preprocessing,19,0.8897615049214411

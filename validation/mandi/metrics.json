@@ -1,0 +1,26 @@
+{
+  "cross_batch_duplicate_rows_removed": 0,
+  "retained_unique_raw_rows": 622885,
+  "unique_daily_profiles": 622885,
+  "days_with_conflicting_reported_prices": 0,
+  "raw_rows_scanned": 14437080,
+  "raw_bytes_scanned": 124901824,
+  "invalid_rows_removed": 0,
+  "inconsistent_price_rows_removed": 1585,
+  "eligible_profiles": 606,
+  "excluded_profiles": 1383,
+  "spread_missing_profile_fraction": 0.0,
+  "spread_used": true,
+  "chosen_k": 2,
+  "minimum_cluster_size_constraint_relaxed": false,
+  "common_window_start": "2022-01-01",
+  "common_window_end": "2024-12-31",
+  "profile_unit": "state/district/market/variety/grade",
+  "features": [
+    "price_cv",
+    "return_volatility",
+    "sharp_drop_fraction",
+    "monthly_variation_cv",
+    "median_relative_spread"
+  ]
+}
