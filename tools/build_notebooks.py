@@ -14,7 +14,7 @@ def code(text):
 
 for task, filename, title, slug in [
     ('electricity', '01_delhi_peak_classification.ipynb', 'Delhi next-hour peak-demand classification with EBM', 'yug201/delhi-5-minute-electricity-demand-for-forecasting'),
-    ('mandi', '02_mandi_price_clustering.ipynb', 'Onion, potato and tomato mandi behavior groups with GMM', 'khandelwalmanas/daily-commodity-prices-india'),
+    ('mandi', '02_mandi_price_clustering.ipynb', 'Onion, potato and tomato mandi behavior groups with K-means', 'khandelwalmanas/daily-commodity-prices-india'),
 ]:
     cfg = {'input_root': '/kaggle/input', 'input_path': None, 'output_dir': f'/kaggle/working/{task}_results'}
     if task == 'electricity':
@@ -23,10 +23,11 @@ for task, filename, title, slug in [
         justification = 'The main model is an **Explainable Boosting Machine (EBM)**: boosted shallow trees learn nonlinear feature effects while preserving readable effect plots. Two prespecified interactions represent demand with recent change and temperature with humidity. Bounded boosting rounds and histogram bins keep computation manageable. Compare it with Logistic Regression, a shallow Decision Tree and persistence/yesterday/last-week baselines. Chronological train/validation/test splits and one-hour embargoes protect future target windows. Balanced training weights address imbalance; scores are not proven calibrated probabilities. Evaluate F1, sensitivity, specificity, ROC-AUC, average precision and advance-warning performance. EBM is an established algorithm; the contribution is its practical application and evaluation.'
         method_reference = '- EBM: https://interpret.ml/docs/ebm.html\n- EBM API: https://interpret.ml/docs/python/api/ExplainableBoostingClassifier.html\n- Confusion matrix: https://scikit-learn.org/stable/modules/generated/sklearn.metrics.confusion_matrix.html'
     else:
-        cfg.update({'commodities': ['Onion', 'Potato', 'Tomato'], 'start_date': '2022-01-01', 'end_date': '2024-12-31', 'chunksize': 200000, 'min_observations': 180, 'min_calendar_coverage': .25, 'min_months': 18, 'min_year_observations': 60, 'min_daily_returns': 60, 'drop_fraction': .10, 'max_clusters': 6, 'min_cluster_fraction': .02, 'stability_repeats': 10, 'clip_quantile': .01, 'membership_confidence_threshold': .65})
+        cfg.update({'commodities': ['Onion', 'Potato', 'Tomato'], 'start_date': '2022-01-01', 'end_date': '2024-12-31', 'chunksize': 200000, 'min_observations': 180, 'min_calendar_coverage': .25, 'min_months': 18, 'min_year_observations': 60, 'min_daily_returns': 60, 'drop_fraction': .10, 'max_clusters': 6, 'min_cluster_fraction': .02, 'stability_repeats': 10, 'clip_quantile': .01})
         problem = 'Discover price-behavior groups for Indian onion, potato and tomato markets. Scan the historical data once, then fit a separate model for each commodity. A profile represents a state/district/market/variety/grade combination over the same 2022–2024 window. Farmer producer organizations can use the descriptions to prioritize market monitoring; the groups do not forecast prices or profits.'
-        justification = 'The main model is a **Gaussian Mixture Model (GMM)**. It allows overlapping market behavior and produces soft membership probabilities. These probabilities describe fitted group membership, not the probability of future losses. Choose 2–6 components and diagonal/full covariance using the lowest BIC among converged solutions satisfying minimum hard-group sizes. Fit each commodity independently so different price levels and behavior do not merge commodities. Standardize numeric behavior features, document outlier clipping, exclude absolute price from the main fit and compare with K-means. Test seeds, subsamples, clipping and price-level sensitivity; report uncertain memberships. BIC is a model-selection criterion; silhouette and ARI measure hard-label geometry and reproducibility. Specificity/accuracy need labels and do not apply. GMM is established; multi-commodity soft grouping is the application enhancement.'
-        method_reference = '- Gaussian mixture: https://scikit-learn.org/stable/modules/mixture.html\n- GMM API: https://scikit-learn.org/stable/modules/generated/sklearn.mixture.GaussianMixture.html\n- Adjusted Rand Index: https://scikit-learn.org/stable/modules/generated/sklearn.metrics.adjusted_rand_score.html'
+        justification = 'The main model is **K-means**, a fast and readable method for grouping standardized numeric market behavior. Scan the large history once, then fit each commodity separately. Choose 2–6 groups by highest silhouette among solutions satisfying minimum group-size and iteration checks. Davies–Bouldin, Calinski–Harabasz and inertia support interpretation. Use documented profile clipping, exclude absolute price from the main fit and test initialization, subsampling, clipping and price-level sensitivity. Per-profile silhouette flags weak separation; it is not a probability. Median summaries reduce extreme-value distortion. Specificity/accuracy require ground-truth labels and do not apply. K-means is established; the enhancements are data quality, three-commodity scope and robust evaluation.'
+        method_reference = '- K-means: https://scikit-learn.org/stable/modules/generated/sklearn.cluster.KMeans.html\n- Silhouette: https://scikit-learn.org/stable/modules/generated/sklearn.metrics.silhouette_score.html\n- Adjusted Rand Index: https://scikit-learn.org/stable/modules/generated/sklearn.metrics.adjusted_rand_score.html'
+        cfg['output_dir'] = '/kaggle/working/mandi_kmeans_results'
     setup = '''import importlib.util
 import subprocess
 import sys
@@ -38,7 +39,7 @@ for module, package in needed:
         subprocess.check_call([sys.executable, '-m', 'pip', 'install', '-q', package])
 if CONFIG['input_path'] is None and not Path(CONFIG['input_root']).exists():
     raise FileNotFoundError('Attach the dataset with Kaggle Add Input before clicking Run All.')
-print('Device: CPU. A T4 session is compatible; EBM and GMM here run on CPU.')
+print('Device: CPU. A T4 session is compatible; EBM and K-means here run on CPU.')
 print('Attached input:', CONFIG['input_root'])
 '''
     cells = [

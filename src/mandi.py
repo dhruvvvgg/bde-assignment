@@ -3,11 +3,8 @@ from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 from sklearn.decomposition import PCA
-from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score, adjusted_rand_score
+from sklearn.metrics import silhouette_score, silhouette_samples, davies_bouldin_score, calinski_harabasz_score, adjusted_rand_score
 import pyarrow.parquet as pq
-from sklearn.mixture import GaussianMixture
-from sklearn.exceptions import ConvergenceWarning
-import warnings
 
 
 MARKET_KEYS = ['state', 'district', 'market', 'variety', 'grade']
@@ -146,12 +143,9 @@ def safe_silhouette(x, labels, limit=2000):
     return float(silhouette_score(x[ids], np.asarray(labels)[ids]))
 
 
-def fit_gmm(x, k, covariance, seed=42):
-    model = GaussianMixture(n_components=k, covariance_type=covariance, n_init=3, max_iter=300, reg_covar=1e-4, random_state=seed)
-    with warnings.catch_warnings(record=True), threadpool_limits(limits=4):
-        warnings.simplefilter('always', ConvergenceWarning)
-        model.fit(x)
-    return model
+def fit_kmeans(x, k, seed=42):
+    with threadpool_limits(limits=4):
+        return KMeans(n_clusters=k, n_init=20, max_iter=300, random_state=seed).fit(x)
 
 
 def cluster_profiles(profiles, cfg):
@@ -168,23 +162,22 @@ def cluster_profiles(profiles, cfg):
     preprocessing = make_pipeline(SimpleImputer(strategy='median'), StandardScaler())
     x = preprocessing.fit_transform(clipped)
     scores, models = [], {}
-    unique = len(np.unique(x, axis=0))
     minimum = max(3, int(np.ceil(len(profiles) * cfg['min_cluster_fraction'])))
+    unique = len(np.unique(x, axis=0))
     for k in range(2, min(cfg['max_clusters'], len(x) - 1, unique) + 1):
-        for covariance in ['diag', 'full']:
-            model = fit_gmm(x, k, covariance)
-            labels = model.predict(x)
-            counts = np.bincount(labels, minlength=k)
-            sil = safe_silhouette(x, labels)
-            models[(k, covariance)] = model
-            scores.append({'components': k, 'covariance_type': covariance, 'BIC': model.bic(x), 'AIC': model.aic(x), 'silhouette_hard_assignments': sil, 'smallest_hard_cluster': counts.min(), 'converged': model.converged_, 'meets_minimum_cluster_size': counts.min() >= minimum})
+        model = fit_kmeans(x, k)
+        labels = model.labels_
+        counts = np.bincount(labels, minlength=k)
+        sil = safe_silhouette(x, labels)
+        models[k] = model
+        valid = np.unique(labels).size > 1
+        scores.append({'clusters': k, 'silhouette': sil, 'davies_bouldin': davies_bouldin_score(x, labels) if valid else np.nan, 'calinski_harabasz': calinski_harabasz_score(x, labels) if valid else np.nan, 'inertia': model.inertia_, 'iterations': model.n_iter_, 'iteration_limit_reached': model.n_iter_ >= model.max_iter, 'smallest_cluster': counts.min(), 'meets_minimum_cluster_size': counts.min() >= minimum})
     selection = pd.DataFrame(scores)
-    feasible = selection.loc[selection.converged & selection.meets_minimum_cluster_size & selection.silhouette_hard_assignments.notna()]
+    feasible = selection.loc[~selection.iteration_limit_reached & selection.meets_minimum_cluster_size & selection.silhouette.notna()]
     if feasible.empty:
-        raise ValueError('No converged GMM meets the minimum group size. Review profiles and selection diagnostics; constraints are not silently relaxed.')
-    winner = feasible.sort_values(['BIC', 'components', 'covariance_type']).iloc[0]
-    model = models[(int(winner.components), winner.covariance_type)]
-    return model, preprocessing, x, features, bounds, selection, clipping_flags, float(spread_missing)
+        raise ValueError('No K-means solution meets the minimum group size and iteration checks. Review profiles; constraints are not silently relaxed.')
+    winner = feasible.sort_values(['silhouette', 'clusters'], ascending=[False, True]).iloc[0]
+    return models[int(winner.clusters)], preprocessing, x, features, bounds, selection, clipping_flags, float(spread_missing)
 
 
 def analyze_commodity(daily, cfg, out):
@@ -193,39 +186,38 @@ def analyze_commodity(daily, cfg, out):
     with timed('profile_features', timings):
         profiles, excluded = make_profiles(daily, cfg)
     excluded.to_csv(out / 'excluded_profiles.csv', index=False)
-    with timed('GMM_selection', timings):
+    with timed('KMeans_selection', timings):
         model, preprocessing, x, features, bounds, selection, flags, missing = cluster_profiles(profiles, cfg)
-    membership = model.predict_proba(x)
-    labels = membership.argmax(axis=1)
+    labels = model.labels_
     profiles['commodity'] = cfg['commodity']
     profiles['cluster'] = labels
-    profiles['membership_confidence'] = membership.max(axis=1)
-    profiles['uncertain_membership'] = profiles.membership_confidence.lt(cfg['membership_confidence_threshold'])
     profiles['profile_was_clipped'] = flags
-    for c in range(model.n_components):
-        profiles[f'group_{c}_membership'] = membership[:, c]
+    profiles['profile_silhouette'] = np.nan
+    if len(x) <= 5000:
+        profiles['profile_silhouette'] = silhouette_samples(x, labels)
+    else:
+        print('Per-profile silhouettes omitted above 5,000 profiles; aggregate silhouette is sampled.')
+    profiles['weak_separation'] = profiles.profile_silhouette.le(0).where(profiles.profile_silhouette.notna())
     order = profiles.groupby('cluster').return_volatility.median().sort_values().index.tolist()
     descriptions = {c: f'Volatility group {rank + 1}/{len(order)} (low to high)' for rank, c in enumerate(order)}
     profiles['group_description'] = profiles.cluster.map(descriptions)
     profiles.to_csv(out / 'market_profiles.csv', index=False)
-    selection = table(selection, 'GMM_component_selection', out)
+    selection = table(selection, 'cluster_selection', out)
     table(bounds, 'profile_clipping_bounds', out)
-    summary = profiles.groupby('cluster').agg(profile_count=('market', 'size'), mean_price=('mean_price', 'mean'), median_price_cv=('price_cv', 'median'), mean_daily_return_volatility=('return_volatility', 'mean'), median_daily_return_volatility=('return_volatility', 'median'), median_sharp_drop_fraction=('sharp_drop_fraction', 'median'), median_monthly_variation=('monthly_variation_cv', 'median'), mean_calendar_coverage=('calendar_coverage', 'mean'), uncertain_profile_fraction=('uncertain_membership', 'mean'), clipped_profile_fraction=('profile_was_clipped', 'mean'), mean_membership_confidence=('membership_confidence', 'mean')).reset_index()
+    summary = profiles.groupby('cluster').agg(profile_count=('market', 'size'), mean_price=('mean_price', 'mean'), median_price_cv=('price_cv', 'median'), mean_daily_return_volatility=('return_volatility', 'mean'), median_daily_return_volatility=('return_volatility', 'median'), median_sharp_drop_fraction=('sharp_drop_fraction', 'median'), median_monthly_variation=('monthly_variation_cv', 'median'), mean_calendar_coverage=('calendar_coverage', 'mean'), clipped_profile_fraction=('profile_was_clipped', 'mean'), mean_profile_silhouette=('profile_silhouette', 'mean'), weak_separation_fraction=('weak_separation', 'mean')).reset_index()
     summary.insert(0, 'commodity', cfg['commodity'])
     summary['group_description'] = summary.cluster.map(descriptions)
     summary = table(summary, 'group_summary', out)
-    with timed('stability_baseline_and_sensitivity', timings), threadpool_limits(limits=4):
-        baseline = KMeans(n_clusters=model.n_components, n_init=10, random_state=42).fit(x)
-        comparison = table(pd.DataFrame([{'model': 'GMM: main', 'groups': model.n_components, 'silhouette_hard_assignments': safe_silhouette(x, labels), 'ARI_vs_GMM': 1.0}, {'model': 'K-means: baseline at same group count', 'groups': model.n_components, 'silhouette_hard_assignments': safe_silhouette(x, baseline.labels_), 'ARI_vs_GMM': adjusted_rand_score(labels, baseline.labels_)}]), 'model_comparison', out)
+    with timed('stability_and_sensitivity', timings), threadpool_limits(limits=4):
         stability_rows = []
         for seed in [7, 21, 84, 123, 2026]:
-            candidate = fit_gmm(x, model.n_components, model.covariance_type, seed)
-            stability_rows.append({'check': 'different initialization', 'seed': seed, 'converged': candidate.converged_, 'ARI_vs_main': adjusted_rand_score(labels, candidate.predict(x))})
+            candidate = fit_kmeans(x, model.n_clusters, seed)
+            stability_rows.append({'check': 'different initialization', 'seed': seed, 'iteration_limit_reached': candidate.n_iter_ >= candidate.max_iter, 'ARI_vs_main': adjusted_rand_score(labels, candidate.predict(x))})
         rng = np.random.default_rng(42)
         for repeat in range(cfg['stability_repeats']):
-            ids = rng.choice(len(x), max(model.n_components + 1, int(.8 * len(x))), replace=False)
-            candidate = fit_gmm(x[ids], model.n_components, model.covariance_type, repeat)
-            stability_rows.append({'check': '80% profile subsample; fixed preprocessing', 'seed': repeat, 'converged': candidate.converged_, 'ARI_vs_main': adjusted_rand_score(labels, candidate.predict(x))})
+            ids = rng.choice(len(x), max(model.n_clusters + 1, int(.8 * len(x))), replace=False)
+            candidate = fit_kmeans(x[ids], model.n_clusters, repeat)
+            stability_rows.append({'check': '80% profile subsample; fixed preprocessing', 'seed': repeat, 'iteration_limit_reached': candidate.n_iter_ >= candidate.max_iter, 'ARI_vs_main': adjusted_rand_score(labels, candidate.predict(x))})
         stability = table(pd.DataFrame(stability_rows), 'group_stability', out)
         sensitivities = []
         for q in [0, .01, .02]:
@@ -234,56 +226,59 @@ def analyze_commodity(daily, cfg, out):
                 values = values.clip(values.quantile(q), values.quantile(1-q), axis=1)
             prep = make_pipeline(SimpleImputer(strategy='median'), StandardScaler())
             changed_x = prep.fit_transform(values)
-            candidate = fit_gmm(changed_x, model.n_components, model.covariance_type)
-            changed_labels = candidate.predict(changed_x)
-            sensitivities.append({'clip_quantile_each_tail': q, 'converged': candidate.converged_, 'ARI_vs_main': adjusted_rand_score(labels, changed_labels), 'smallest_hard_cluster': np.bincount(changed_labels, minlength=model.n_components).min(), 'silhouette': safe_silhouette(changed_x, changed_labels)})
+            candidate = fit_kmeans(changed_x, model.n_clusters)
+            changed_labels = candidate.labels_
+            sensitivities.append({'clip_quantile_each_tail': q, 'iteration_limit_reached': candidate.n_iter_ >= candidate.max_iter, 'ARI_vs_main': adjusted_rand_score(labels, changed_labels), 'smallest_cluster': np.bincount(changed_labels, minlength=model.n_clusters).min(), 'silhouette': safe_silhouette(changed_x, changed_labels)})
         sensitivity = table(pd.DataFrame(sensitivities), 'clipping_sensitivity', out)
         price_x = np.column_stack([x, StandardScaler().fit_transform(profiles[['log_mean_price']])])
-        price_model = fit_gmm(price_x, model.n_components, model.covariance_type)
-        price_ari = adjusted_rand_score(labels, price_model.predict(price_x))
-        table(pd.DataFrame([{'check': 'include log mean price', 'converged': price_model.converged_, 'ARI_vs_main': price_ari}]), 'price_level_sensitivity', out)
+        price_model = fit_kmeans(price_x, model.n_clusters)
+        price_ari = adjusted_rand_score(labels, price_model.labels_)
+        table(pd.DataFrame([{'check': 'include log mean price', 'iteration_limit_reached': price_model.n_iter_ >= price_model.max_iter, 'ARI_vs_main': price_ari}]), 'price_level_sensitivity', out)
     nearest = []
-    for c in range(model.n_components):
+    for c in range(model.n_clusters):
         ids = np.flatnonzero(labels == c)
-        ranked = ids[np.argsort(np.linalg.norm(x[ids] - model.means_[c], axis=1))[:3]]
+        ranked = ids[np.argsort(np.linalg.norm(x[ids] - model.cluster_centers_[c], axis=1))[:3]]
         nearest.append(profiles.iloc[ranked])
-    representatives = table(pd.concat(nearest, ignore_index=True)[['commodity'] + MARKET_KEYS + ['cluster', 'group_description', 'membership_confidence', 'uncertain_membership', 'price_cv', 'return_volatility', 'sharp_drop_fraction']], 'representative_markets', out)
-    uncertain = profiles.sort_values('membership_confidence').head(10)
-    table(uncertain[['commodity'] + MARKET_KEYS + ['cluster', 'membership_confidence', 'uncertain_membership']], 'least_confident_assignments', out)
+    table(pd.concat(nearest, ignore_index=True)[['commodity'] + MARKET_KEYS + ['cluster', 'group_description', 'profile_silhouette', 'price_cv', 'return_volatility', 'sharp_drop_fraction']], 'representative_markets', out)
+    table(profiles.sort_values('profile_silhouette').head(10)[['commodity'] + MARKET_KEYS + ['cluster', 'profile_silhouette', 'weak_separation']], 'least_separated_profiles', out)
     table(profiles.loc[profiles.return_volatility.nlargest(10).index, MARKET_KEYS + ['return_volatility', 'large_daily_change_fraction', 'profile_was_clipped']], 'extreme_profiles_for_review', out)
     changed = daily.copy()
     changed['daily_return'] = changed.groupby(MARKET_KEYS, observed=True).price.pct_change(fill_method=None)
     changed.loc[changed.groupby(MARKET_KEYS, observed=True).date.diff().dt.days.ne(1), 'daily_return'] = np.nan
     eligible = changed.merge(profiles[MARKET_KEYS], on=MARKET_KEYS, how='inner')
-    whatif = table(pd.DataFrame([{'drop_definition': f'{drop:.0%} consecutive-day decline', 'event_fraction': eligible.daily_return.dropna().le(-drop).mean(), 'valid_daily_changes': eligible.daily_return.notna().sum(), 'groups_refitted': False} for drop in [.05, .10, .15]]), 'what_if_daily_drops', out)
-    table(pd.DataFrame([{'minimum_confidence': cutoff, 'profiles_below_cutoff': int(profiles.membership_confidence.lt(cutoff).sum()), 'interpretation': 'ambiguity of fitted membership, not future price risk'} for cutoff in [.50, .65, .80, .90]]), 'what_if_membership_confidence', out)
+    table(pd.DataFrame([{'drop_definition': f'{drop:.0%} consecutive-day decline', 'event_fraction': eligible.daily_return.dropna().le(-drop).mean(), 'valid_daily_changes': eligible.daily_return.notna().sum(), 'groups_refitted': False} for drop in [.05, .10, .15]]), 'what_if_daily_drops', out)
+    table(pd.DataFrame([{'silhouette_cutoff': cutoff, 'profiles_below_cutoff': int(profiles.profile_silhouette.le(cutoff).sum()), 'profiles_evaluated': int(profiles.profile_silhouette.notna().sum()), 'interpretation': 'geometric separation diagnostic, not probability or future price risk'} for cutoff in [-.10, 0, .10]]), 'what_if_profile_separation', out)
     table(pd.DataFrame([{'minimum_calendar_coverage': cutoff, 'currently_eligible_profiles_retained': int(profiles.calendar_coverage.ge(cutoff).sum()), 'groups_refitted': False} for cutoff in [.25, .35, .50]]), 'what_if_reporting_coverage', out)
     with timed('charts', timings):
-        fig, axes = plt.subplots(1, 2, figsize=(11, 4))
-        for covariance, part in selection.groupby('covariance_type'):
-            axes[0].plot(part.components, part.BIC, marker='o', label=covariance)
-            axes[1].plot(part.components, part.silhouette_hard_assignments, marker='o', label=covariance)
-        axes[0].set(xlabel='GMM components', ylabel='BIC (lower is better)', title=cfg['commodity'])
-        axes[1].set(xlabel='GMM components', ylabel='Hard-assignment silhouette')
-        axes[0].legend(); axes[1].legend()
-        figure('GMM_selection', out)
+        fig, axes = plt.subplots(1, 3, figsize=(14, 4))
+        axes[0].plot(selection.clusters, selection.silhouette, marker='o')
+        axes[1].plot(selection.clusters, selection.davies_bouldin, marker='o')
+        axes[2].plot(selection.clusters, selection.inertia, marker='o')
+        for ax in axes:
+            ax.axvline(model.n_clusters, linestyle='--', color='red')
+            ax.set_xlabel('K-means clusters')
+        axes[0].set_ylabel('Silhouette (higher is better)')
+        axes[1].set_ylabel('Davies–Bouldin (lower is better)')
+        axes[2].set_ylabel('Inertia (elbow diagnostic)')
+        fig.suptitle(cfg['commodity'])
+        figure('cluster_selection', out)
         projection = PCA(n_components=2, random_state=42)
         points = projection.fit_transform(x)
         plt.figure(figsize=(9, 5))
-        for c in range(model.n_components):
+        for c in range(model.n_clusters):
             mask = labels == c
             plt.scatter(points[mask, 0], points[mask, 1], label=f'Group {c}', alpha=.65)
-        uncertain_ids = profiles.uncertain_membership.to_numpy()
-        plt.scatter(points[uncertain_ids, 0], points[uncertain_ids, 1], facecolors='none', edgecolors='black', label='Uncertain membership')
+        weak = profiles.weak_separation.fillna(False).to_numpy(dtype=bool)
+        plt.scatter(points[weak, 0], points[weak, 1], facecolors='none', edgecolors='black', label='Profile silhouette ≤ 0')
         plt.xlabel('PC1'); plt.ylabel('PC2'); plt.legend()
         plt.title(f'{cfg["commodity"]}: PCA display explains {projection.explained_variance_ratio_.sum():.1%}')
         figure('group_projection', out)
         plt.figure(figsize=(9, 4))
-        plt.imshow(model.means_, aspect='auto', cmap='coolwarm'); plt.colorbar(label='Standardized component mean')
+        plt.imshow(model.cluster_centers_, aspect='auto', cmap='coolwarm'); plt.colorbar(label='Standardized cluster center')
         plt.xticks(range(len(features)), features, rotation=20)
-        plt.yticks(range(model.n_components), [f'Group {c}' for c in range(model.n_components)])
+        plt.yticks(range(model.n_clusters), [f'Group {c}' for c in range(model.n_clusters)])
         plt.title(cfg['commodity'])
-        figure('GMM_feature_heatmap', out)
+        figure('cluster_feature_heatmap', out)
         summary.plot.bar(x='cluster', y='profile_count', legend=False, figsize=(8, 4), title=cfg['commodity'])
         figure('group_sizes', out)
         plt.figure(figsize=(11, 5))
@@ -295,22 +290,23 @@ def analyze_commodity(daily, cfg, out):
             (curve / curve.mean()).plot(label=f'Group {representative["cluster"]}: {representative["market"]}')
         plt.ylabel('Monthly mean / profile mean'); plt.legend(); plt.title(cfg['commodity'])
         figure('representative_price_histories', out)
-        profiles.membership_confidence.plot.hist(bins=20, figsize=(8, 4), title=cfg['commodity'] + ': GMM membership confidence')
-        plt.xlabel('Maximum fitted component probability')
-        figure('membership_confidence', out)
-    joblib.dump({'model': model, 'preprocessing': preprocessing, 'features': features, 'clipping_bounds': bounds, 'group_descriptions': descriptions, 'config': cfg}, out / 'GMM.joblib')
-    selected = selection.loc[selection.components.eq(model.n_components) & selection.covariance_type.eq(model.covariance_type)].iloc[0]
-    bootstrap_mean = stability.loc[stability.check.str.startswith('80%') & stability.converged, 'ARI_vs_main'].mean()
-    metrics = {'commodity': cfg['commodity'], 'retained_daily_records': len(daily), 'eligible_profiles': len(profiles), 'excluded_profiles': len(excluded), 'groups': model.n_components, 'covariance_type': model.covariance_type, 'BIC': selected.BIC, 'silhouette_hard_assignments': safe_silhouette(x, labels), 'mean_subsampling_ARI': bootstrap_mean, 'uncertain_profile_fraction': profiles.uncertain_membership.mean(), 'clipped_profile_fraction': flags.mean(), 'spread_missing_fraction': missing, 'price_feature_ARI': price_ari}
+        if profiles.profile_silhouette.notna().any():
+            profiles.profile_silhouette.plot.hist(bins=20, figsize=(8, 4), title=cfg['commodity'] + ': profile separation')
+            plt.xlabel('Profile silhouette (not a probability)')
+            figure('profile_separation', out)
+    joblib.dump({'model': model, 'preprocessing': preprocessing, 'features': features, 'clipping_bounds': bounds, 'group_descriptions': descriptions, 'config': cfg}, out / 'kmeans.joblib')
+    selected = selection.loc[selection.clusters.eq(model.n_clusters)].iloc[0]
+    bootstrap_mean = stability.loc[stability.check.str.startswith('80%') & ~stability.iteration_limit_reached, 'ARI_vs_main'].mean()
+    metrics = {'commodity': cfg['commodity'], 'retained_daily_records': len(daily), 'eligible_profiles': len(profiles), 'excluded_profiles': len(excluded), 'groups': model.n_clusters, 'silhouette': selected.silhouette, 'davies_bouldin': selected.davies_bouldin, 'calinski_harabasz': selected.calinski_harabasz, 'mean_subsampling_ARI': bootstrap_mean, 'weak_separation_fraction': profiles.loc[profiles.profile_silhouette.notna(), 'weak_separation'].mean(), 'profile_silhouettes_evaluated': int(profiles.profile_silhouette.notna().sum()), 'clipped_profile_fraction': flags.mean(), 'spread_missing_fraction': missing, 'price_feature_ARI': price_ari}
     write_json(out / 'metrics.json', metrics)
     table(pd.DataFrame([{'stage': stage, 'seconds': seconds} for stage, seconds in timings.items()]), 'runtime', out)
     descriptions_text = []
     for row in summary.to_dict('records'):
-        descriptions_text.append(f'Group {int(row["cluster"])} contains {int(row["profile_count"])} profiles; median daily volatility {row["median_daily_return_volatility"]:.3f}, median sharp-drop frequency {row["median_sharp_drop_fraction"]:.1%}, uncertain membership {row["uncertain_profile_fraction"]:.1%}.')
+        descriptions_text.append(f'Group {int(row["cluster"])} contains {int(row["profile_count"])} profiles; median daily volatility {row["median_daily_return_volatility"]:.3f}, median sharp-drop frequency {row["median_sharp_drop_fraction"]:.1%}.')
     unclipped_ari = sensitivity.loc[sensitivity.clip_quantile_each_tail.eq(0), 'ARI_vs_main'].iloc[0]
     two_pct_ari = sensitivity.loc[sensitivity.clip_quantile_each_tail.eq(.02), 'ARI_vs_main'].iloc[0]
-    inference = f'**{cfg["commodity"]}:** selected {model.n_components} Gaussian components ({model.covariance_type} covariance), silhouette {metrics["silhouette_hard_assignments"]:.3f}, mean converged subsampling ARI {bootstrap_mean:.3f}. ' + ' '.join(descriptions_text) + f' Assignment ARI without clipping is {unclipped_ari:.3f}; with 2% clipping it is {two_pct_ari:.3f}. Low values reveal dependence on extreme-value treatment. Adding price level changes assignments with ARI {price_ari:.3f}. Component membership describes overlap in observed behavior, not a probability of future loss.'
-    return {'metrics': metrics, 'profiles': profiles, 'summary': summary, 'selection': selection, 'stability': stability, 'sensitivity': sensitivity, 'model_comparison': comparison, 'inference': inference}
+    inference = f'**{cfg["commodity"]}:** selected {model.n_clusters} K-means groups, silhouette {metrics["silhouette"]:.3f}, Davies–Bouldin {metrics["davies_bouldin"]:.3f} and mean subsampling ARI {bootstrap_mean:.3f}. ' + ' '.join(descriptions_text) + f' Assignment ARI without clipping is {unclipped_ari:.3f}; with 2% clipping it is {two_pct_ari:.3f}. Low values reveal dependence on extreme-value treatment. Adding price level changes assignments with ARI {price_ari:.3f}. Profiles with non-positive silhouettes are flagged for weak geometric separation; these scores are not membership probabilities or future price risk.'
+    return {'metrics': metrics, 'profiles': profiles, 'summary': summary, 'selection': selection, 'stability': stability, 'sensitivity': sensitivity, 'model': model, 'inference': inference}
 
 
 def run_mandi(cfg):
@@ -341,12 +337,12 @@ def run_mandi(cfg):
     quality = {**audit, 'raw_rows_scanned_once': int(manifest.raw_rows_scanned.sum()), 'raw_bytes_scanned_once': int(manifest.bytes.sum()), 'inconsistent_price_rows_removed': int(manifest.inconsistent_price_rows.sum()), 'commodities': requested, 'eligible_profiles_total': len(overall_profiles), 'common_window_start': cfg['start_date'], 'common_window_end': cfg['end_date']}
     write_json(out / 'metrics.json', quality)
     quality_table = table(pd.DataFrame([{'check': key, 'value': str(value)} for key, value in quality.items()]), 'data_quality', out)
-    inference = '\n\n'.join(result['inference'] for result in analyses.values()) + '\n\nEach commodity was preprocessed and modeled separately, so group numbers and BIC values are not comparable across commodities. Higher median volatility/drop-frequency groups may warrant closer monitoring. Monthly variation is a proxy, not proof of seasonality; reports can reflect missing markets, variety recoding and extreme movements. Confidence cutoffs change which memberships are flagged as ambiguous, without refitting. Drop/coverage what-if tables are descriptive, not forecasts. Median summaries resist extreme-value inflation. Covariance selection uses BIC with convergence and minimum hard-group-size checks; silhouette is supplementary. ARI stability holds preprocessing fixed and does not establish economic validity. Transport costs, quantities and farmer-level selling prices are absent.'
+    inference = '\n\n'.join(result['inference'] for result in analyses.values()) + '\n\nEach commodity was preprocessed and modeled separately, so group numbers are not comparable across commodities. Higher median volatility/drop-frequency groups may warrant closer monitoring. Monthly variation is a proxy, not proof of seasonality; reports can reflect missing markets, variety recoding and extreme movements. Drop/coverage/profile-separation what-if tables are descriptive, not forecasts. Median summaries resist extreme-value inflation. Cluster count is selected by highest silhouette among solutions satisfying minimum size and iteration checks; Davies–Bouldin, Calinski–Harabasz and inertia are supporting diagnostics. ARI stability holds preprocessing fixed and does not establish economic validity. Transport costs, quantities and farmer-level selling prices are absent.'
     sections = ['# Clustering: Indian mandi price-behavior groups',
                 f'## 1. Problem statement\nGroup Onion, Potato and Tomato market/variety/grade profiles by observed price variability over {cfg["start_date"]} to {cfg["end_date"]}. Farmer producer organizations could prioritize markets for monitoring. Each commodity is modeled separately, preventing commodity identity from driving the groups.',
-                '## 2. Model and justification\nGaussian Mixture Models allow overlapping behavior groups and provide fitted component-membership probabilities. Standardized behavior features use price CV, consecutive-day return volatility, sharp-drop frequency, monthly variation and relative spread when available. GMM component count and diagonal/full covariance are selected by BIC among converged solutions meeting minimum hard-group size. K-means remains a baseline at the same group count. This is an established method, not a novel algorithm. Classification accuracy and specificity are inapplicable without true cluster labels.',
-                '## 3. Coding\nAll code is embedded in the Kaggle notebook. Year files are scanned once in CSV chunks or Parquet batches and all three commodities are filtered together. Subsequent profiles, clipping, scaling and GMM fitting are separate by commodity. Known price inconsistencies and duplicates are removed; daily medians resolve multiple reports. Common-window coverage and consecutive-calendar-day returns are enforced. Stale reporting, extreme returns and variety switches are flagged. GMM confidence describes fitted overlap, not future price risk.',
-                f'## 4. Results\nRaw records scanned once: {quality["raw_rows_scanned_once"]:,}; retained unique commodity records: {audit["retained_unique_raw_rows"]:,}; eligible profiles: {len(overall_profiles):,}. Per-commodity tables/charts report GMM selection, K-means comparison, median behavior, membership confidence, stability, clipping/price sensitivity and representative histories.',
+                '## 2. Model and justification\nK-means is fast and easy to explain on standardized numeric behavior profiles. Choose 2–6 groups by highest silhouette among solutions meeting minimum size and iteration checks. Price CV, consecutive-day return volatility, sharp-drop frequency, monthly variation and available relative spread describe observed behavior. Absolute price is excluded from the main model. K-means is established, not a novel algorithm. Classification accuracy and specificity are inapplicable without true cluster labels.',
+                '## 3. Coding\nAll code is embedded in the Kaggle notebook. Year files are scanned once in CSV chunks or Parquet batches and all three commodities are filtered together. Subsequent profiles, clipping, scaling and K-means fitting are separate by commodity. Known price inconsistencies and duplicates are removed; daily medians resolve multiple reports. Common-window coverage and consecutive-calendar-day returns are enforced. Stale reporting, extreme returns and variety switches are flagged.',
+                f'## 4. Results\nRaw records scanned once: {quality["raw_rows_scanned_once"]:,}; retained unique commodity records: {audit["retained_unique_raw_rows"]:,}; eligible profiles: {len(overall_profiles):,}. Per-commodity tables/charts report cluster-count comparisons, median behavior, geometric separation, stability, clipping/price sensitivity and representative histories.',
                 '## 5. Inference and what-if analysis\n' + inference]
     report_tables = {'Commodity overview': overview, 'Data quality': quality_table}
     for commodity, result in analyses.items():

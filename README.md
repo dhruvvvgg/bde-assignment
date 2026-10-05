@@ -5,7 +5,7 @@ This repository stores the project sources and two **standalone Kaggle notebooks
 | Application | Main model | Notebook | Attach this Kaggle input |
 |---|---|---|---|
 | Delhi next-hour peak-demand warning | Explainable Boosting Machine (EBM) | [Classification notebook](notebooks/01_delhi_peak_classification.ipynb) | [Delhi five-minute electricity demand](https://www.kaggle.com/datasets/yug201/delhi-5-minute-electricity-demand-for-forecasting) |
-| Onion, potato and tomato market behavior | Separate Gaussian Mixture Models (GMM) | [Clustering notebook](notebooks/02_mandi_price_clustering.ipynb) | [Historical daily commodity prices](https://www.kaggle.com/datasets/khandelwalmanas/daily-commodity-prices-india) |
+| Onion, potato and tomato market behavior | Separate K-means models | [Clustering notebook](notebooks/02_mandi_price_clustering.ipynb) | [Historical daily commodity prices](https://www.kaggle.com/datasets/khandelwalmanas/daily-commodity-prices-india) |
 
 ## Run on Kaggle
 
@@ -15,7 +15,7 @@ This repository stores the project sources and two **standalone Kaggle notebooks
 4. Click **Run All**. Defaults process the complete eligible Delhi history or all three selected commodities.
 5. Download results from Kaggle Output; save a notebook version for submission.
 
-T4 sessions work, but these implementations run on **CPU**. GPU selection does not accelerate EBM or scikit-learn GMM. With several compatible demand files attached, use `input_path` to choose one. Mandi prefers equivalent Parquet files over CSV and skips named annual files outside 2022–2024.
+T4 sessions work, but these implementations run on **CPU**. GPU selection does not accelerate EBM or scikit-learn K-means. With several compatible demand files attached, use `input_path` to choose one. Mandi prefers equivalent Parquet files over CSV and skips named annual files outside 2022–2024.
 
 ## Assignment outputs
 
@@ -38,11 +38,11 @@ The peak percentile is an experimental proxy, not an operator capacity limit. Ba
 - Scan millions of historical records **once**, retain Onion/Potato/Tomato, then construct and model each commodity independently. Aggregation keys include commodity, preventing mixed prices even when market/variety/grade names match.
 - Remove known price inconsistencies and duplicates; aggregate daily median prices. Require shared-window coverage, represented months/years and enough consecutive-day returns. Flag stale reporting, extreme returns and dominant-variety switches.
 - Fit standardized behavior features: price CV, consecutive-day return volatility, sharp-drop frequency, monthly variation and relative spread if available. Exclude absolute price level; document 1% tail clipping and compare no clipping/2% clipping.
-- Choose 2–6 GMM components with diagonal or full covariance by lowest BIC among converged fits satisfying minimum hard-group sizes. Compare K-means at the same group count.
-- Export every component-membership probability and maximum confidence; flag memberships below 0.65. Confidence is fitted overlap, not future loss probability. Report median group behavior to reduce distortion from extremes.
-- Show BIC/AIC, hard-assignment silhouette, initialization/subsampling ARI, price-level sensitivity, representative histories, PCA displays and confidence histograms. Drop, confidence and coverage what-if tables are descriptive and do not refit the groups.
+- Choose 2–6 K-means groups by highest silhouette among fits satisfying minimum group sizes and iteration checks. Report Davies–Bouldin, Calinski–Harabasz and inertia as supporting diagnostics. Multiple initializations reduce sensitivity to starting centers.
+- Report median group behavior to reduce distortion from extremes. Export per-profile silhouettes and flag non-positive values as weak geometric separation; these are not probabilities or predictions. Per-profile calculations are capped at 5,000 profiles to bound pairwise work, while aggregate silhouette is sampled for larger fits.
+- Show initialization/subsampling ARI, clipping/price-level sensitivity, representative histories, PCA displays, cluster centers and profile-separation histograms. Drop, separation and coverage what-if tables are descriptive and do not refit the groups.
 
-GMM fitting uses hundreds of aggregated profiles per commodity, while preprocessing handles millions of raw rows. Report both volumes honestly. Group IDs and BIC are local to each commodity. No true group labels exist, so classification accuracy/specificity do not apply. Monthly variation is not proof of seasonality. Calendar coverage includes non-trading days; logistics, traded quantities and farmer-level prices are absent. Established GMM methods provide the enhancement, not algorithmic novelty.
+K-means fitting uses hundreds of aggregated profiles per commodity, while preprocessing handles millions of raw rows. Report both volumes honestly. Group IDs are local to each commodity. No true group labels exist, so classification accuracy/specificity do not apply. Monthly variation is not proof of seasonality. Calendar coverage includes non-trading days; logistics, traded quantities and farmer-level prices are absent. The model is established; the enhancements lie in coverage, data quality and evaluation.
 
 ## Validation and maintenance
 
@@ -62,8 +62,8 @@ python tools/run_notebook.py notebooks/02_mandi_price_clustering.ipynb --input-r
 
 - [EBM documentation](https://interpret.ml/docs/ebm.html)
 - [EBM classifier API](https://interpret.ml/docs/python/api/ExplainableBoostingClassifier.html)
-- [Gaussian mixtures](https://scikit-learn.org/stable/modules/mixture.html)
-- [GMM API](https://scikit-learn.org/stable/modules/generated/sklearn.mixture.GaussianMixture.html)
+- [K-means API](https://scikit-learn.org/stable/modules/generated/sklearn.cluster.KMeans.html)
+- [Silhouette score](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.silhouette_score.html)
 - [Adjusted Rand Index](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.adjusted_rand_score.html)
 
 The mandi collection is a community mirror of government AGMARKNET records. Notebook results are historical analyses, not deployed operational decisions.

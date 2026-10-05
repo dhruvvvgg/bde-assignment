@@ -67,18 +67,19 @@ class PipelineChecks(unittest.TestCase):
             self.assertEqual(manifest.raw_rows_scanned.sum(), 3)
             self.assertEqual(audit['retained_unique_raw_rows'], 3)
 
-    def test_gmm_soft_memberships_and_bic_selection(self):
+    def test_kmeans_selection_respects_size_and_separation(self):
         rng = np.random.default_rng(42)
         features = ['price_cv', 'return_volatility', 'sharp_drop_fraction', 'monthly_variation_cv', 'median_relative_spread']
         x = np.vstack([rng.normal(.3, .04, (60, 5)), rng.normal(.8, .06, (60, 5))])
         profiles = pd.DataFrame(x, columns=features)
         cfg = {'max_clusters': 3, 'min_cluster_fraction': .02, 'clip_quantile': .01}
         model, _, transformed, _, _, selection, _, _ = namespace['cluster_profiles'](profiles, cfg)
-        memberships = model.predict_proba(transformed)
-        self.assertTrue(np.allclose(memberships.sum(axis=1), 1))
-        feasible = selection.loc[selection.converged & selection.meets_minimum_cluster_size & selection.silhouette_hard_assignments.notna()]
-        self.assertAlmostEqual(model.bic(transformed), feasible.BIC.min())
-        self.assertTrue(model.converged_)
+        feasible = selection.loc[~selection.iteration_limit_reached & selection.meets_minimum_cluster_size & selection.silhouette.notna()]
+        chosen = selection.loc[selection.clusters.eq(model.n_clusters)].iloc[0]
+        self.assertAlmostEqual(chosen.silhouette, feasible.silhouette.max())
+        self.assertTrue(chosen.meets_minimum_cluster_size)
+        self.assertEqual(model.n_clusters, 2)
+        self.assertTrue(np.array_equal(model.predict(transformed), model.labels_))
 
     def test_notebook_sections_once_and_no_runtime_repository_access(self):
         for path in (ROOT / 'notebooks').glob('*.ipynb'):

@@ -1,3 +1,0 @@
-model,groups,silhouette_hard_assignments,ARI_vs_GMM
-GMM: main,6,0.07073244084342449,1.0
-K-means: baseline at same group count,6,0.2978147355374562,0.2720842395466336

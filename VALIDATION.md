@@ -1,15 +1,15 @@
 # Validation on real public data
 
-Both final standalone notebooks executed every code cell in order on **5 October 2026**, using real attached-format public data. The local runner overrides only the input/output folders. Synthetic fixtures are used only in regression tests, never for reported results.
+The standalone three-commodity K-means notebook executed every code cell in order on **5 October 2026**, using the full real 2022–2024 files. Classification uses the unchanged EBM model source validated earlier the same day. The local notebook runner overrides only input/output folders. Synthetic fixtures are used only in regression tests, never for reported results.
 
 | Pipeline | Data processed | Complete notebook wall time, local CPU |
 |---|---|---|
 | Delhi EBM classification | 393,440 raw records; 307,441 complete examples; 215,196 training rows; 46,117 final-test rows | 71.64 seconds |
-| Three-commodity GMM clustering | 14,437,080 raw rows scanned once; 1,829,255 retained unique records; 1,750 eligible profiles | 70.09 seconds |
+| Three-commodity K-means clustering | 14,437,080 raw rows scanned once; 1,829,255 retained unique records; 1,750 eligible profiles | 58.69 seconds |
 
-The sum of these wall times is approximately **2 minutes 22 seconds**. The two runs overlapped locally; this sum is not a benchmark of sequential execution. Files and dependencies were already present. Timings include imports, charts and report/ZIP exports, but exclude data download, session startup and package installation. Allow roughly **2–5 minutes per notebook on Kaggle**, with attached data; actual CPU/storage load varies. T4 selection does not accelerate these CPU models.
+These are local CPU observations with files/dependencies already available, not Kaggle benchmarks. Times include imports, charts and report/ZIP exports but exclude session startup and package installation. Allow roughly **2–5 minutes per notebook on Kaggle** with attached inputs; storage/CPU load varies. T4 selection does not accelerate these CPU implementations.
 
-An initial local EBM attempt encountered a joblib worker/psutil process-discovery failure. The final EBM uses `n_jobs=1` with a single bag, avoiding unnecessary child-process creation. The final complete run passed with that configuration.
+The EBM uses `n_jobs=1` with one bag to avoid unnecessary child-process creation. Its model, preprocessing and evaluation are unchanged by the clustering update.
 
 ## Classification findings
 
@@ -28,35 +28,43 @@ The data contain 21,569 missing five-minute demand slots; these are not interpol
 
 ## Clustering findings
 
-All selected main GMMs converged, satisfied the minimum hard-group size and used full covariance. Each commodity has separately fitted clipping/scaling/model parameters.
+Each commodity has separately fitted clipping/scaling/K-means parameters. Cluster count is selected from 2–6 by highest silhouette among fits meeting minimum group size and iteration checks. Supporting metrics are Davies–Bouldin (lower is better), Calinski–Harabasz (higher is better) and inertia/elbow diagnostics.
 
-| Commodity | Retained daily records | Eligible profiles | Components | Hard-label silhouette | Mean converged subsampling ARI | Membership below 0.65 |
+| Commodity | Retained daily records | Eligible profiles | Groups | Silhouette | Davies–Bouldin | Mean subsampling ARI |
 |---|---|---|---|---|---|---|
-| Onion | 622,885 | 606 | 6 | 0.0707 | 0.6524 | 8.75% |
-| Potato | 621,863 | 576 | 4 | 0.1141 | 0.6875 | 7.29% |
-| Tomato | 584,507 | 568 | 4 | 0.1382 | 0.5561 | 10.74% |
+| Onion | 622,885 | 606 | 2 | 0.4408 | 1.1361 | 0.8930 |
+| Potato | 621,863 | 576 | 2 | 0.3834 | 1.2769 | 0.9883 |
+| Tomato | 584,507 | 568 | 2 | 0.3678 | 1.2195 | 0.9421 |
 
-These are **overlapping descriptive behavior groups**, not strongly separated or economically verified categories. BIC selects probabilistic fits; the relatively low hard-label silhouettes and moderate ARI should be presented honestly. GMM membership confidence measures fitted overlap, not future price risk.
+Groups are descriptive price-behavior categories, not forecasts or verified economic labels. Per-profile silhouette flags weak separation without representing a probability. Median behavior summaries, representatives, reporting/price flags and geometric diagnostics remain available for interpretation.
 
 Outlier treatment matters. ARI relative to the main 1% clipping fit:
 
 | Commodity | No clipping | 2% clipping | Add log mean price |
 |---|---|---|---|
-| Onion | 0.3874 | 0.6890 | 0.4745 |
-| Potato | 0.4315 | 0.6741 | 0.5349 |
-| Tomato | 0.7548 | 0.3805 | 0.6189 |
+| Onion | 0.7083 | 0.8535 | 0.9243 |
+| Potato | -0.0459 | 0.9852 | 0.8523 |
+| Tomato | 0.8422 | 0.9926 | 0.8451 |
 
-Unclipped onion/potato solutions create hard groups with only two profiles and do not satisfy the main selection constraint; they remain explicit diagnostic alternatives. Group descriptions use medians, and extreme profiles are exported for review. There were 3,725 known inconsistent-price rows removed across the three commodities. No commodity was silently skipped.
+Low ARI reveals sensitivity, not a reason to hide the alternative result. Sensitivity fits retain the selected group count and report their sizes and iteration checks even when an alternative creates tiny groups. Extreme profiles are exported for review. There were 3,725 known inconsistent-price rows removed across the three commodities. No requested commodity was silently skipped.
 
-Classification accuracy/specificity cannot be computed meaningfully for unlabeled clustering. Commodity group IDs and BIC are not cross-commodity rankings. Calendar coverage includes non-trading days; quantities, transport costs and farmer-level selling prices are not modeled.
+Classification accuracy/specificity cannot be interpreted for unlabeled clustering. Group IDs are local to each commodity. Calendar coverage includes non-trading days; quantities, transport costs and farmer-level selling prices are not modeled.
+
+## Preserved corrections
+
+- Onion, potato and tomato are filtered in one projected/batched scan, then modeled independently. Commodity remains in aggregation keys, preventing mixed-price profiles.
+- Positive/consistent price checks, duplicates and daily medians; shared 2022–2024 window, annual/monthly coverage, minimum consecutive-day returns; stale prices, extreme changes and dominant-variety switches remain checked.
+- Standardization, documented 1% clipping, no-clipping/2% sensitivity, absolute-price exclusion and price-level sensitivity remain intact.
+- Multiple initializations, seed checks and 80% subsampling ARI; median summaries, representative histories, PCA and heatmaps; drop/coverage what-if tables and stage runtimes remain intact.
+- Weak-separation diagnostics use per-profile silhouette, not model probabilities. Calculations are capped above 5,000 profiles to avoid unbounded pairwise work; aggregate silhouette remains sampled for larger datasets.
+- Both notebooks remain self-contained for Kaggle Add Input → Run All. Numbered sections 1–5 display once; full reports are exported without redisplay. No repository runtime dependency or implementation-link section exists.
 
 ## Verification
 
-- Eight regression tests passed: specificity; future-feature leakage; gap-crossing target exclusion; price consistency/consecutive-day returns; commodity-preserving aggregation; GMM posterior normalization/BIC selection; single notebook section display/no repository runtime dependency; embedded-source synchronization/compilation.
-- Both notebooks passed nbformat schema validation and complete real-data execution.
-- Classification split embargo assertions passed; all three historical backtests executed.
-- Each notebook has sections 1–5 exactly once in its Markdown cells. Report-writing helpers export the full report without displaying it again; the inference cell displays only the inference text. No implementation-link section or platform fallback remains.
-- Generated HTML chart paths resolve, including nested commodity folders.
-- Representative EBM learned effects and GMM selection/projection charts were visually checked.
+- Eight regression tests passed: specificity; future-feature leakage; gap-crossing target exclusion; price consistency/consecutive-day returns; commodity-preserving aggregation; K-means selection/minimum-size constraints; notebook section counts and runtime independence; embedded-source synchronization/compilation.
+- Both notebooks passed nbformat schema validation; the complete updated clustering notebook passed on all real annual files.
+- The unchanged classification source retains its earlier real-data execution, split embargo checks and three historical backtests.
+- Generated HTML chart paths resolve, including all nested commodity folders. ZIP and saved model bundles were checked.
+- Representative cluster-selection and projection charts were visually inspected.
 
-Selected current-run CSVs, PNGs and reports under `validation/` replace the earlier LR/onion-only examples. Dataset files and model binaries are not committed. Kaggle Run All regenerates complete outputs from its attached datasets.
+Selected current-run tables, PNGs and reports are stored under `validation/`. Dataset files and saved model binaries are not committed. Kaggle Run All regenerates complete outputs from attached inputs.

@@ -1,4 +1,4 @@
-clip_quantile_each_tail,converged,ARI_vs_main,smallest_hard_cluster,silhouette
-0.0,True,0.43145336088791775,2,0.13123026541571464
-0.01,True,1.0,61,0.11413240449051762
-0.02,True,0.674077435058968,72,0.13168482344143276
+clip_quantile_each_tail,iteration_limit_reached,ARI_vs_main,smallest_cluster,silhouette
+0.0,False,-0.045892816703455935,164,0.3253705716540481
+0.01,False,1.0,146,0.3834125580611844
+0.02,False,0.985248219215798,144,0.37897257354890623

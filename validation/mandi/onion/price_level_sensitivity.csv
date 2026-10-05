@@ -1,2 +1,2 @@
-check,converged,ARI_vs_main
-include log mean price,True,0.47449562545045654
+check,iteration_limit_reached,ARI_vs_main
+include log mean price,False,0.9242701230504431

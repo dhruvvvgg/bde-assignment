@@ -1,0 +1,4 @@
+silhouette_cutoff,profiles_below_cutoff,profiles_evaluated,interpretation
+-0.1,2,576,"geometric separation diagnostic, not probability or future price risk"
+0.0,26,576,"geometric separation diagnostic, not probability or future price risk"
+0.1,49,576,"geometric separation diagnostic, not probability or future price risk"

@@ -1,16 +1,16 @@
-check,seed,converged,ARI_vs_main
-different initialization,7,True,0.4085798861040435
-different initialization,21,True,0.663051810697993
-different initialization,84,True,0.40763141355650145
-different initialization,123,True,0.4068283249662433
-different initialization,2026,True,0.4085798861040435
-80% profile subsample; fixed preprocessing,0,True,0.6630434560290516
-80% profile subsample; fixed preprocessing,1,True,0.6049098031291197
-80% profile subsample; fixed preprocessing,2,True,0.41624053107358033
-80% profile subsample; fixed preprocessing,3,True,0.7630677857917783
-80% profile subsample; fixed preprocessing,4,True,0.6797835526074194
-80% profile subsample; fixed preprocessing,5,True,0.6959486376608729
-80% profile subsample; fixed preprocessing,6,True,0.476755264602456
-80% profile subsample; fixed preprocessing,7,True,0.4017437589672399
-80% profile subsample; fixed preprocessing,8,True,0.4084286818756553
-80% profile subsample; fixed preprocessing,9,True,0.4511810110007432
+check,seed,iteration_limit_reached,ARI_vs_main
+different initialization,7,False,1.0
+different initialization,21,False,0.9926336566702488
+different initialization,84,False,1.0
+different initialization,123,False,0.9926336566702488
+different initialization,2026,False,1.0
+80% profile subsample; fixed preprocessing,0,False,1.0
+80% profile subsample; fixed preprocessing,1,False,0.9926230411769882
+80% profile subsample; fixed preprocessing,2,False,0.8795967902873241
+80% profile subsample; fixed preprocessing,3,False,0.9926230411769882
+80% profile subsample; fixed preprocessing,4,False,0.9926336566702488
+80% profile subsample; fixed preprocessing,5,False,0.9926230411769882
+80% profile subsample; fixed preprocessing,6,False,0.9341500592276475
+80% profile subsample; fixed preprocessing,7,False,0.744142838689476
+80% profile subsample; fixed preprocessing,8,False,0.9926230411769882
+80% profile subsample; fixed preprocessing,9,False,0.9001164751087094
