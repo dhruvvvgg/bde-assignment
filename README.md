@@ -1,73 +1,54 @@
-# Big Data Essentials: two practical Indian applications
+# Big Data Essentials: two Indian applications
 
-Two standalone Python notebooks, each designed to execute from top to bottom with **Run All**. All model code is embedded in each notebook. The files in `src/` are the maintainable source used to generate the notebooks; downloading them is not necessary to run a notebook.
+This repository stores the project sources and two **standalone Kaggle notebooks**. The notebooks are the final deliverables: each embeds every helper and model definition, reads attached datasets and executes top to bottom with **Run All**. No repository access, clone, companion scripts or automatic dataset download is needed during execution.
 
-| Problem | Notebook | Open in Colab | Kaggle input |
+| Application | Main model | Notebook | Attach this Kaggle input |
 |---|---|---|---|
-| Delhi next-hour peak-demand classification | [01_delhi_peak_classification.ipynb](notebooks/01_delhi_peak_classification.ipynb) | [Run classification](https://colab.research.google.com/github/dhruvvvgg/bde-assignment/blob/main/notebooks/01_delhi_peak_classification.ipynb) | [Delhi five-minute demand with weather](https://www.kaggle.com/datasets/yug201/delhi-5-minute-electricity-demand-for-forecasting) |
-| Indian mandi price-behavior clustering | [02_mandi_price_clustering.ipynb](notebooks/02_mandi_price_clustering.ipynb) | [Run clustering](https://colab.research.google.com/github/dhruvvvgg/bde-assignment/blob/main/notebooks/02_mandi_price_clustering.ipynb) | [Historical daily commodity prices, 2001–2026](https://www.kaggle.com/datasets/khandelwalmanas/daily-commodity-prices-india) |
+| Delhi next-hour peak-demand warning | Explainable Boosting Machine (EBM) | [Classification notebook](notebooks/01_delhi_peak_classification.ipynb) | [Delhi five-minute electricity demand](https://www.kaggle.com/datasets/yug201/delhi-5-minute-electricity-demand-for-forecasting) |
+| Onion, potato and tomato market behavior | Separate Gaussian Mixture Models (GMM) | [Clustering notebook](notebooks/02_mandi_price_clustering.ipynb) | [Historical daily commodity prices](https://www.kaggle.com/datasets/khandelwalmanas/daily-commodity-prices-india) |
 
-## Kaggle: Run All
+## Run on Kaggle
 
-1. Import one notebook into Kaggle.
-2. Choose **Add Input** and attach the corresponding dataset above.
-3. Keep the default configuration. The mandi notebook selects Onion and a shared 2022–2024 window. It prefers Parquet over equivalent CSV files and skips named year files outside the window.
-4. Click **Run All**. No manual cell edits or companion script are needed with the specified inputs.
-5. Save a Kaggle notebook version. Put that actual URL into `CONFIG['implementation_url']`, then run again before submission. The default Colab links are valid implementation links to these GitHub notebooks, not invented Kaggle URLs.
-6. Download the generated results ZIP from the Output pane.
+1. Import the desired `.ipynb` into Kaggle.
+2. Use **Add Input** to attach the dataset listed above. Mandi needs the historical 2022–2024 files, not a single-day snapshot.
+3. Enable Internet if a missing dependency must be installed. Classification installs `interpret-core` and `holidays` if needed; clustering checks `pyarrow`. Data are read from attached inputs only.
+4. Click **Run All**. Defaults process the complete eligible Delhi history or all three selected commodities.
+5. Download results from Kaggle Output; save a notebook version for submission.
 
-T4 sessions are compatible, but these scikit-learn models run on **CPU**. Selecting GPU will not accelerate them. Notebook Internet is only required when an optional dependency is missing. For an entirely offline run, dependencies must already be installed and data attached.
+T4 sessions work, but these implementations run on **CPU**. GPU selection does not accelerate EBM or scikit-learn GMM. With several compatible demand files attached, use `input_path` to choose one. Mandi prefers equivalent Parquet files over CSV and skips named annual files outside 2022–2024.
 
-Colab downloads public datasets automatically through kagglehub when `/kaggle/input` is absent. The full historical mandi download is about 1.51 GB compressed; downloading all its files can take much longer than the model computation. Kaggle attached data avoids this download step. To use predownloaded files, set `input_root` before running.
+## Assignment outputs
 
-## Outputs mapped to the assignment rubric
+Each notebook displays these numbered sections **once**: problem statement; model and justification; coding; results; inference and what-if analysis. The complete Markdown/HTML report is exported without redisplaying those headings. There is no implementation-link section or URL configuration.
 
-The screenshot assigns six half-mark items per problem, plus presentation marks. Each notebook explicitly includes:
+Results include quality/volume tables, comparisons, charts, appropriate metrics, actual inferred findings, sensitivity checks, configuration, timings and saved models. A ZIP packages the outputs. The mandi HTML report includes charts and summaries from all three commodity folders. Keep extracted folders together to preserve relative chart paths.
 
-| Required item | Implementation |
-|---|---|
-| Problem statement | India-specific decision, prediction/grouping unit, and scope |
-| Model and justification | Why the simple model fits, preprocessing assumptions, comparisons and limitations |
-| Coding | Embedded implementation and a single pipeline invocation |
-| Results | Data-quality tables, model/cluster comparisons, metrics and saved charts |
-| Inference | Actual computed findings, what-if analysis and limitations |
-| Implementation URL | Colab link; configurable actual Kaggle link |
+## Classification design
 
-Both create `assignment_report.md`, an HTML report, CSV tables, PNG charts, environment/config metadata, saved model bundles, and a ZIP. HTML charts use relative image paths, so keep the unzipped bundle together. Runtime is reported by stage; the pipeline's total excludes final report/ZIP packaging. The validation runner additionally measures complete notebook wall time.
+- EBM learns nonlinear additive effects with two explicit interactions: current demand × recent change, and temperature × humidity. It uses 64 main-effect bins, 16 interaction bins, 800 maximum rounds and one bag for bounded computation. Internal random validation/early stopping are disabled; external chronological validation chooses the alert cutoff.
+- Balanced training weights; current demand, lags, trends, cyclic time, Indian holidays and available weather features. Missing demand is not interpolated; incomplete targets are excluded. Missing weather is handled natively by EBM. LR/tree baselines use train-fitted imputation/scaling where relevant.
+- Chronological 70/15/15 splits with one-hour embargoes, a training-only peak percentile and validation-only alert cutoffs. Logistic Regression, a shallow Decision Tree, persistence and yesterday/last-week baselines remain comparisons.
+- F1, sensitivity, specificity, precision, ROC-AUC, average precision, confusion counts, day-block intervals, quarterly results, historical EBM backtests and advance-warning-only evaluation.
+- Learned effect plots, term importance, example predictions and false alarms/missed peaks per 1,000 five-minute checks. Alert-cutoff, peak-definition and temperature scenarios show descriptive sensitivity.
 
-### Classification enhancements
+The peak percentile is an experimental proxy, not an operator capacity limit. Balanced scores are not demonstrated calibrated probabilities. Weather availability at prediction time and source demand units need confirmation. Correlated lags can share importance; effect plots are associations, not causes. Overall scores partly reflect already-high demand, so advance-warning results matter. EBM is established, not a newly invented algorithm.
 
-- Current demand, short lags/trends, yesterday and last-week lags; cyclical time features, weekends and Indian holidays.
-- Current temperature, humidity, dew point, wind speed, pressure and a temperature–humidity interaction where available. Weather timestamp availability must be checked before deployment.
-- Demand/calendar Logistic Regression, weather-enhanced Logistic Regression and a shallow Decision Tree.
-- Persistence, same-hour-yesterday and same-hour-last-week baselines.
-- Chronological 70/15/15 splits, one-hour target embargoes, training-only preprocessing and peak threshold, validation-only alert cutoffs.
-- Demand gaps are not interpolated. Unusual demand is flagged for review using training IQR fences and sharp jumps; genuine peaks are retained.
-- Accuracy, balanced accuracy, precision, sensitivity, **specificity**, F1, ROC-AUC, average precision and confusion counts.
-- Advance-warning-only evaluation when current demand is below the threshold; quarterly test evaluation and three historical rolling backtests.
-- Day-block approximate confidence intervals, coefficient interpretation, alert-cutoff tradeoffs, alternative peak definitions and conditional temperature scenarios.
+## Clustering design
 
-The class-weighted model produces alert scores, not demonstrated calibrated probabilities. The percentile peak definition is an experimental proxy, not an electricity-system capacity limit. Historical weather and current-bin readings are assumed to have arrived by prediction time. Demand units remain the source's native units pending confirmation.
+- Scan millions of historical records **once**, retain Onion/Potato/Tomato, then construct and model each commodity independently. Aggregation keys include commodity, preventing mixed prices even when market/variety/grade names match.
+- Remove known price inconsistencies and duplicates; aggregate daily median prices. Require shared-window coverage, represented months/years and enough consecutive-day returns. Flag stale reporting, extreme returns and dominant-variety switches.
+- Fit standardized behavior features: price CV, consecutive-day return volatility, sharp-drop frequency, monthly variation and relative spread if available. Exclude absolute price level; document 1% tail clipping and compare no clipping/2% clipping.
+- Choose 2–6 GMM components with diagonal or full covariance by lowest BIC among converged fits satisfying minimum hard-group sizes. Compare K-means at the same group count.
+- Export every component-membership probability and maximum confidence; flag memberships below 0.65. Confidence is fitted overlap, not future loss probability. Report median group behavior to reduce distortion from extremes.
+- Show BIC/AIC, hard-assignment silhouette, initialization/subsampling ARI, price-level sensitivity, representative histories, PCA displays and confidence histograms. Drop, confidence and coverage what-if tables are descriptive and do not refit the groups.
 
-### Clustering enhancements
+GMM fitting uses hundreds of aggregated profiles per commodity, while preprocessing handles millions of raw rows. Report both volumes honestly. Group IDs and BIC are local to each commodity. No true group labels exist, so classification accuracy/specificity do not apply. Monthly variation is not proof of seasonality. Calendar coverage includes non-trading days; logistics, traded quantities and farmer-level prices are absent. Established GMM methods provide the enhancement, not algorithmic novelty.
 
-- Projected CSV chunks and Parquet batches; one commodity filtered before retaining rows.
-- Common observation window, reporting coverage, represented months/year checks and minimum consecutive-day returns.
-- Positive-price and known minimum ≤ modal ≤ maximum consistency checks; duplicate removal and daily median aggregation.
-- Profiles keyed by state/district/market/variety/grade. Stale reporting, extreme changes and annual dominant-variety switches are flagged.
-- Price CV, consecutive-day return volatility, sharp-drop frequency, monthly variation proxy and relative price spread when sufficiently available.
-- Absolute price excluded from the main model; price-level ablation provided.
-- Standardization, documented profile winsorization and a no-winsorization sensitivity check with extreme profiles listed for review.
-- k comparison using silhouette, Davies–Bouldin and Calinski–Harabasz; minimum cluster-size constraint, seed checks and 80% subsampling ARI.
-- Cluster summaries, representatives, normalized price histories, PCA display, heatmap and coverage/drop-definition what-if tables.
+## Validation and maintenance
 
-These are descriptive clusters, not forecasts or profit recommendations. No ground-truth clusters exist, so accuracy/specificity/confusion matrices are inappropriate. Calendar coverage includes non-trading days. Monthly variation is not proof of seasonality. ARI checks hold preprocessing fixed and do not establish economic validity. Logistics, traded quantities and farmer-level selling prices are not modeled.
+[VALIDATION.md](VALIDATION.md) records real-data results, measured runtimes and limitations. Allow roughly **2–5 minutes per notebook** on Kaggle with attached data, excluding setup; see the measured CPU times in the validation report. Example reports/CSVs/charts are under `validation/`; datasets and model binaries are not committed. Runtime tables exclude final ZIP packaging; the validation runner measures full notebook wall time including imports and exports.
 
-## Validation and runtime
-
-Both notebook pipelines were executed on the actual public datasets. See [VALIDATION.md](VALIDATION.md) for measured times, real results and limitations. These are local CPU measurements, not T4 benchmarks. Plan approximately **1–3 minutes per notebook on Kaggle with inputs attached**, excluding session startup and any dependency installation; actual performance varies.
-
-Five focused regression tests cover specificity, future-feature leakage, incomplete target windows, price consistency/consecutive-day returns, and notebook/source synchronization. Assertions inside the real classification run verify split embargoes. Both notebooks also pass nbformat schema validation.
+The scripts below are for maintaining this storage repository, not prerequisites for Kaggle execution:
 
 ```bash
 pip install -r requirements.txt
@@ -77,13 +58,12 @@ python tools/run_notebook.py notebooks/01_delhi_peak_classification.ipynb --inpu
 python tools/run_notebook.py notebooks/02_mandi_price_clustering.ipynb --input-root /path/to/mandi --output-dir /path/to/mandi_results
 ```
 
-## References
+## Method references
 
-- [scikit-learn Logistic Regression](https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.LogisticRegression.html)
-- [scikit-learn K-means](https://scikit-learn.org/stable/modules/generated/sklearn.cluster.KMeans.html)
-- [Confusion matrix](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.confusion_matrix.html)
+- [EBM documentation](https://interpret.ml/docs/ebm.html)
+- [EBM classifier API](https://interpret.ml/docs/python/api/ExplainableBoostingClassifier.html)
+- [Gaussian mixtures](https://scikit-learn.org/stable/modules/mixture.html)
+- [GMM API](https://scikit-learn.org/stable/modules/generated/sklearn.mixture.GaussianMixture.html)
 - [Adjusted Rand Index](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.adjusted_rand_score.html)
-- [Indian onion-market quality-check reference](https://github.com/MrVinamra/Mandi-Price-Cointegration-VECM)
-- [Delhi forecasting baseline reference](https://github.com/pyaf/load_forecasting)
 
-The pipeline implementation is original to this assignment; the references inform methods and quality checks. The Kaggle mandi collection is a community mirror of government AGMARKNET data. Dataset files are not committed.
+The mandi collection is a community mirror of government AGMARKNET records. Notebook results are historical analyses, not deployed operational decisions.

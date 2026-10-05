@@ -112,10 +112,9 @@ def finish_report(out, cfg, sections, tables, timings, total_start):
     markup += '<pre style="white-space:pre-wrap">' + html.escape(body) + '</pre>'
     for name, df in tables.items():
         markup += '<h2>' + html.escape(name) + '</h2>' + df.to_html(index=False)
-    for p in sorted(out.glob('*.png')):
-        markup += f'<h2>{html.escape(p.stem)}</h2><img style="max-width:100%" src="{p.name}">'
+    for p in sorted(out.rglob('*.png')):
+        markup += f'<h2>{html.escape(p.stem)}</h2><img style="max-width:100%" src="{p.relative_to(out).as_posix()}">'
     (out / 'assignment_report.html').write_text(markup + '</body></html>', encoding='utf-8')
-    display(Markdown(body))
     import shutil
     archive = shutil.make_archive(str(out.parent / out.name), 'zip', out)
-    print(f'Output folder: {out}\nReport bundle: {archive}\nImplementation: {cfg["implementation_url"]}')
+    print(f'Output folder: {out}\nReport bundle: {archive}')

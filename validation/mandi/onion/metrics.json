@@ -1,0 +1,15 @@
+{
+  "commodity": "Onion",
+  "retained_daily_records": 622885,
+  "eligible_profiles": 606,
+  "excluded_profiles": 1383,
+  "groups": 6,
+  "covariance_type": "full",
+  "BIC": 4204.944044419825,
+  "silhouette_hard_assignments": 0.07073244084342449,
+  "mean_subsampling_ARI": 0.6524231305366229,
+  "uncertain_profile_fraction": 0.08745874587458746,
+  "clipped_profile_fraction": 0.07425742574257425,
+  "spread_missing_fraction": 0.0,
+  "price_feature_ARI": 0.47449562545045654
+}

@@ -1,0 +1,10 @@
+case,timestamp,temperature_change_C,model_alert_score,interpretation
+low demand,2024-09-12 03:00:00,-3,4.536767627824508e-15,conditional model sensitivity; not a causal effect or calibrated probability
+low demand,2024-09-12 03:00:00,0,6.5230136547936975e-15,conditional model sensitivity; not a causal effect or calibrated probability
+low demand,2024-09-12 03:00:00,3,1.2493218513566552e-14,conditional model sensitivity; not a causal effect or calibrated probability
+near peak threshold,2024-09-09 10:50:00,-3,0.99624695077654,conditional model sensitivity; not a causal effect or calibrated probability
+near peak threshold,2024-09-09 10:50:00,0,0.9984412768703023,conditional model sensitivity; not a causal effect or calibrated probability
+near peak threshold,2024-09-09 10:50:00,3,0.9993233591638419,conditional model sensitivity; not a causal effect or calibrated probability
+high demand,2024-06-19 15:05:00,-3,0.9999999701805499,conditional model sensitivity; not a causal effect or calibrated probability
+high demand,2024-06-19 15:05:00,0,0.9999999758700236,conditional model sensitivity; not a causal effect or calibrated probability
+high demand,2024-06-19 15:05:00,3,0.9999999713511826,conditional model sensitivity; not a causal effect or calibrated probability

@@ -1,0 +1,15 @@
+{
+  "commodity": "Tomato",
+  "retained_daily_records": 584507,
+  "eligible_profiles": 568,
+  "excluded_profiles": 1316,
+  "groups": 4,
+  "covariance_type": "full",
+  "BIC": 5218.756630516036,
+  "silhouette_hard_assignments": 0.1382436251739862,
+  "mean_subsampling_ARI": 0.5561102482737917,
+  "uncertain_profile_fraction": 0.1073943661971831,
+  "clipped_profile_fraction": 0.07394366197183098,
+  "spread_missing_fraction": 0.0,
+  "price_feature_ARI": 0.6188508882378908
+}

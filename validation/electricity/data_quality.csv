@@ -1,0 +1,12 @@
+check,value
+raw_rows,393440
+invalid_demand_or_timestamp,0
+duplicate_timestamp_rows,0
+off_grid_timestamp_rows,0
+grid_intervals,415009
+missing_demand_intervals,21569
+start,2021-01-01 00:30:00
+end,2024-12-12 00:30:00
+usable_examples,307441
+removed_incomplete_examples,107568
+input_file,/workspace/scratch/a96eaa992a5f/validation_data/delhi.csv

@@ -1,0 +1,15 @@
+{
+  "commodity": "Potato",
+  "retained_daily_records": 621863,
+  "eligible_profiles": 576,
+  "excluded_profiles": 1340,
+  "groups": 4,
+  "covariance_type": "full",
+  "BIC": 4258.897723480011,
+  "silhouette_hard_assignments": 0.11413240449051762,
+  "mean_subsampling_ARI": 0.6875182721628993,
+  "uncertain_profile_fraction": 0.07291666666666667,
+  "clipped_profile_fraction": 0.06770833333333333,
+  "spread_missing_fraction": 0.0,
+  "price_feature_ARI": 0.5349137738118772
+}

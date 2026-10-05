@@ -1,0 +1,16 @@
+check,seed,converged,ARI_vs_main
+different initialization,7,True,0.7616854107574006
+different initialization,21,True,0.88659542174402
+different initialization,84,True,0.7441878071362811
+different initialization,123,True,0.8920797888724474
+different initialization,2026,True,0.9338248847862353
+80% profile subsample; fixed preprocessing,0,True,0.5274881651168112
+80% profile subsample; fixed preprocessing,1,True,0.5477958338839152
+80% profile subsample; fixed preprocessing,2,True,0.7461172380096334
+80% profile subsample; fixed preprocessing,3,True,0.7081970433732564
+80% profile subsample; fixed preprocessing,4,True,0.6261091251084315
+80% profile subsample; fixed preprocessing,5,True,0.6038787188418179
+80% profile subsample; fixed preprocessing,6,True,0.6458381443502254
+80% profile subsample; fixed preprocessing,7,True,0.8529181070159318
+80% profile subsample; fixed preprocessing,8,True,0.726416155885534
+80% profile subsample; fixed preprocessing,9,True,0.539472773780672

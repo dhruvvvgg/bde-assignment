@@ -1,0 +1,5 @@
+minimum_confidence,profiles_below_cutoff,interpretation
+0.5,10,"ambiguity of fitted membership, not future price risk"
+0.65,61,"ambiguity of fitted membership, not future price risk"
+0.8,101,"ambiguity of fitted membership, not future price risk"
+0.9,151,"ambiguity of fitted membership, not future price risk"

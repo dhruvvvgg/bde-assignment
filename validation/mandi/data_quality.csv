@@ -1,0 +1,12 @@
+check,value
+cross_batch_duplicate_rows_removed,0
+retained_unique_raw_rows,1829255
+unique_daily_profiles,1829255
+days_with_conflicting_reported_prices,0
+raw_rows_scanned_once,14437080
+raw_bytes_scanned_once,124901824
+inconsistent_price_rows_removed,3725
+commodities,"['Onion', 'Potato', 'Tomato']"
+eligible_profiles_total,1750
+common_window_start,2022-01-01
+common_window_end,2024-12-31

@@ -5,6 +5,8 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score, roc_auc_score, average_precision_score, accuracy_score, ConfusionMatrixDisplay, PrecisionRecallDisplay, RocCurveDisplay
 import holidays
+from interpret.glassbox import ExplainableBoostingClassifier
+from sklearn.utils.class_weight import compute_sample_weight
 
 
 def binary_metrics(y, pred, score=None):
@@ -103,6 +105,11 @@ def block_bootstrap(test, predictions, repeats=100):
     return pd.DataFrame([{'metric': name, 'lower_95': np.nanquantile(vals[:, i], .025), 'upper_95': np.nanquantile(vals[:, i], .975), 'resampling_unit': 'calendar day'} for i, name in enumerate(['f1', 'recall_sensitivity', 'specificity'])])
 
 
+def build_ebm(columns, cfg):
+    pairs = [(columns.index('demand_now'), columns.index('change_30min')), (columns.index('temperature'), columns.index('humidity'))]
+    return ExplainableBoostingClassifier(feature_names=columns, interactions=pairs, max_bins=64, max_interaction_bins=16, max_rounds=cfg.get('ebm_rounds', 800), learning_rate=.04, outer_bags=1, validation_size=0, early_stopping_rounds=0, greedy_ratio=0, smoothing_rounds=50, interaction_smoothing_rounds=50, min_samples_leaf=50, n_jobs=1, random_state=42)
+
+
 def rolling_backtests(frame, base, weather, cfg):
     rows = []
     last = frame.index.max().normalize()
@@ -122,9 +129,9 @@ def rolling_backtests(frame, base, weather, cfg):
             rows.append({'evaluation_start': eval_start, 'evaluation_end': end, 'status': 'skipped: one-class fit/tuning period'})
             continue
         columns = base + weather
-        model = make_pipeline(SimpleImputer(strategy='median'), StandardScaler(), LogisticRegression(class_weight='balanced', max_iter=1500, random_state=42))
+        model = build_ebm(columns, cfg)
         with threadpool_limits(limits=4):
-            model.fit(fit[columns], fit.target)
+            model.fit(fit[columns], fit.target, sample_weight=compute_sample_weight('balanced', fit.target))
             cutoff = fit_cutoff(tune.target, model.predict_proba(tune[columns])[:, 1])
             score = model.predict_proba(check[columns])[:, 1]
         rows.append({'evaluation_start': eval_start, 'evaluation_end': end, 'status': 'evaluated', 'threshold_native_units': peak, 'probability_cutoff': cutoff, 'training_rows': len(fit), **binary_metrics(check.target, score >= cutoff, score)})
@@ -164,14 +171,18 @@ def run_electricity(cfg):
     unusual = flags.loc[flags.outside_training_IQR_fences | flags.absolute_change_5min_fraction.gt(.30)]
     unusual.to_csv(out / 'unusual_demand_for_review.csv', index_label='timestamp')
     table(pd.DataFrame([{'training_IQR_lower': low, 'training_IQR_upper': high, 'flagged_grid_rows': len(unusual), 'action': 'flag only; retain genuine peaks'}]), 'demand_outlier_audit', out)
-    variants = {'Logistic Regression: demand/calendar': (base, make_pipeline(SimpleImputer(strategy='median'), StandardScaler(), LogisticRegression(class_weight='balanced', max_iter=1500, random_state=42))),
+    variants = {'Explainable Boosting Machine': (features, build_ebm(features, cfg)),
+                'Logistic Regression: demand/calendar': (base, make_pipeline(SimpleImputer(strategy='median'), StandardScaler(), LogisticRegression(class_weight='balanced', max_iter=1500, random_state=42))),
                 'Logistic Regression: weather enhanced': (features, make_pipeline(SimpleImputer(strategy='median'), StandardScaler(), LogisticRegression(class_weight='balanced', max_iter=1500, random_state=42))),
                 'Shallow Decision Tree': (features, make_pipeline(SimpleImputer(strategy='median'), DecisionTreeClassifier(max_depth=5, min_samples_leaf=max(50, len(train) // 1000), class_weight='balanced', random_state=42)))}
     fitted, rows, predictions, validation_rows = {}, [], {}, []
     with timed('train_and_evaluate_models', timings), threadpool_limits(limits=4):
         for name, (cols, model) in variants.items():
             tick = time.perf_counter()
-            model.fit(train[cols], train.target)
+            if isinstance(model, ExplainableBoostingClassifier):
+                model.fit(train[cols], train.target, sample_weight=compute_sample_weight('balanced', train.target))
+            else:
+                model.fit(train[cols], train.target)
             pv = model.predict_proba(valid[cols])[:, 1]
             cutoff = fit_cutoff(valid.target, pv)
             pt = model.predict_proba(test[cols])[:, 1]
@@ -186,7 +197,7 @@ def run_electricity(cfg):
         rows.append({'model': name, 'fit_and_score_seconds': 0, **binary_metrics(test.target, pred, test[source])})
     comparison = table(pd.DataFrame(rows), 'model_comparison_test', out)
     validation_results = table(pd.DataFrame(validation_rows), 'model_comparison_validation', out)
-    main = 'Logistic Regression: weather enhanced'
+    main = 'Explainable Boosting Machine'
     model, cols, cutoff = fitted[main]
     pred, prob = predictions[main]
     advance = test['demand_now'].lt(threshold).to_numpy()
@@ -201,26 +212,40 @@ def run_electricity(cfg):
         backtests = table(rolling_backtests(train, base, weather, cfg) if cfg.get('rolling_backtests', True) else pd.DataFrame(), 'historical_rolling_backtests', out)
     thresholds = table(pd.DataFrame([{'probability_cutoff': c, **binary_metrics(test.target, prob >= c, prob)} for c in [.2, .35, .5, cutoff, .8]]), 'what_if_alert_cutoffs', out)
     uncertainty = table(block_bootstrap(test, pred, cfg['bootstrap_repeats']), 'day_block_confidence_intervals', out)
-    coefficients = table(pd.DataFrame({'feature': cols, 'standardized_coefficient': model[-1].coef_[0]}).sort_values('standardized_coefficient'), 'coefficients', out)
+    lr_model, lr_cols, _ = fitted['Logistic Regression: weather enhanced']
+    coefficients = table(pd.DataFrame({'feature': lr_cols, 'standardized_coefficient': lr_model[-1].coef_[0]}).sort_values('standardized_coefficient'), 'lr_baseline_coefficients', out)
+    importances = table(pd.DataFrame({'term': model.term_names_, 'mean_absolute_score_contribution': model.term_importances()}).sort_values('mean_absolute_score_contribution', ascending=False), 'ebm_term_importance', out)
+    explanation = model.explain_global()
     policy_rows = []
     for q in [.85, .90, .95]:
         policy = train.demand_now.quantile(q)
         policy_rows.append({'train_quantile': q, 'demand_threshold_native_units': policy, 'test_future_peak_fraction': test.future_hour_max.ge(policy).mean(), 'model_retrained': False})
     policy_table = table(pd.DataFrame(policy_rows), 'what_if_peak_definition', out)
     scenarios = []
-    anchor = test.loc[test.demand_now.lt(threshold)].tail(1)[cols].copy()
-    if not anchor.empty:
+    anchors = {'low demand': test.demand_now.idxmin(), 'near peak threshold': (test.demand_now - threshold).abs().idxmin(), 'high demand': test.demand_now.idxmax()}
+    for case, timestamp in anchors.items():
+        anchor = test.loc[[timestamp], cols].copy()
         for delta in [-3, 0, 3]:
             x = anchor.copy()
             x['temperature'] += delta
             if 'dew_point' in x:
                 x['dew_point'] += delta
             x['temperature_x_humidity'] = x.temperature * x.humidity / 100
-            scenarios.append({'temperature_change_C': delta, 'model_alert_score': model.predict_proba(x)[:, 1][0], 'interpretation': 'conditional model sensitivity; not a causal effect or calibrated probability'})
+            scenarios.append({'case': case, 'timestamp': str(timestamp), 'temperature_change_C': delta, 'model_alert_score': model.predict_proba(x)[:, 1][0], 'interpretation': 'conditional model sensitivity; not a causal effect or calibrated probability'})
     scenario_table = table(pd.DataFrame(scenarios), 'what_if_temperature', out)
     export = test[['demand_now', 'future_hour_max', 'target']].copy()
     export['alert_score'], export['prediction'] = prob, pred
     export.to_csv(out / 'test_predictions.csv', index_label='timestamp')
+    examples = []
+    for actual, prediction, name in [(1, 1, 'correct warning'), (0, 0, 'correct no warning'), (0, 1, 'false alarm'), (1, 0, 'missed peak')]:
+        part = export.loc[export.target.eq(actual) & export.prediction.eq(prediction)].head(3).copy()
+        part['outcome'] = name
+        examples.append(part.reset_index())
+    table(pd.concat(examples, ignore_index=True), 'example_predictions', out)
+    practical = comparison[['model', 'rows', 'FP', 'FN']].copy()
+    practical['false_alarms_per_1000_checks'] = 1000 * practical.FP / practical.rows
+    practical['missed_peak_checks_per_1000_checks'] = 1000 * practical.FN / practical.rows
+    table(practical, 'practical_error_rates', out)
     with timed('charts', timings):
         grid.demand.resample('D').max().plot(figsize=(11, 4), title='Delhi daily maximum demand; native source units')
         plt.axhline(threshold, color='red', linestyle='--', label='Training-derived peak threshold')
@@ -237,8 +262,21 @@ def run_electricity(cfg):
             figure('roc_and_precision_recall', out)
         comparison.set_index('model')[['f1', 'recall_sensitivity', 'specificity']].plot.bar(figsize=(11, 4), ylim=(0, 1), rot=20)
         figure('model_comparison', out)
-        coefficients.set_index('feature').standardized_coefficient.plot.barh(figsize=(9, 8), title='Standardized coefficients: associations, not causes')
-        figure('coefficients', out)
+        importances.head(12).sort_values('mean_absolute_score_contribution').set_index('term').plot.barh(figsize=(10, 5), legend=False, title='EBM: influential terms; associations, not causes')
+        figure('ebm_term_importance', out)
+        for term_name in ['demand_now', 'change_30min', 'temperature', 'humidity']:
+            term_index = model.term_names_.index(term_name)
+            effect = explanation.data(term_index)
+            values = np.asarray(effect['scores'], dtype=float)
+            names = np.asarray(effect['names'], dtype=float)
+            if len(names) == len(values) + 1:
+                names = (names[:-1] + names[1:]) / 2
+            plt.figure(figsize=(8, 4))
+            plt.plot(names, values, marker='.', drawstyle='steps-mid')
+            plt.xlabel(term_name); plt.ylabel('Contribution to weighted model log-odds')
+            plt.title('EBM learned effect: conditional association')
+            figure('ebm_effect_' + term_name, out)
+            pd.DataFrame({'feature_value': names, 'score_contribution': values}).to_csv(out / ('ebm_effect_' + term_name + '.csv'), index=False)
         thresholds.plot(x='probability_cutoff', y=['precision', 'recall_sensitivity', 'specificity'], marker='o', figsize=(9, 4))
         figure('alert_cutoff_tradeoff', out)
     joblib.dump({'model': model, 'feature_columns': cols, 'alert_cutoff': cutoff, 'peak_threshold': threshold, 'config': cfg}, out / 'classifier.joblib')
@@ -246,12 +284,13 @@ def run_electricity(cfg):
     persistence = comparison.loc[comparison.model.eq('Persistence')].iloc[0]
     no_weather = comparison.loc[comparison.model.eq('Logistic Regression: demand/calendar')].iloc[0]
     advance_main = advance_table.loc[advance_table.model.eq(main)].iloc[0]
+    lr_weather = comparison.loc[comparison.model.eq('Logistic Regression: weather enhanced')].iloc[0]
+    inference = f"EBM test F1 is {full.f1:.3f}, sensitivity {full.recall_sensitivity:.3f} and specificity {full.specificity:.3f}. Its F1 difference from weather-enhanced LR is {full.f1 - lr_weather.f1:+.3f}; from persistence it is {full.f1 - persistence.f1:+.3f}. A negative difference means EBM did not improve that comparison. Advance-warning-only recall is {advance_main.recall_sensitivity:.3f}. This subset measures warnings before demand is already above the threshold. EBM effect plots show nonlinear conditional associations, not causal effects; correlated demand lags can share importance. Alert-cutoff tables show the tradeoff between false alarms and missed peaks, while practical error rates count five-minute checks rather than independent events. Temperature scenarios now cover low, near-threshold and high demand. Peak-definition tables change event prevalence without retraining. Quarterly results and expanding-window historical EBM backtests expose changes across time; day-block intervals are approximate. Balanced sample weights mean alert scores are not demonstrated calibrated probabilities. Weather did not necessarily add predictive value: LR weather-minus-demand/calendar F1 is {lr_weather.f1 - no_weather.f1:+.3f}. Demand units, the operator's actual peak limit and availability of historical weather at prediction time require confirmation before deployment."
     sections = ['# Classification: next-hour peak-demand warning in Delhi',
-                f'## 1. Problem statement\nAt each observed five-minute timestamp, predict whether any demand reading in the following hour will exceed a threshold fixed from the training-period {cfg["peak_quantile"]:.0%} quantile. The application is an early warning for grid planning; the percentile is an experimental proxy, not an operator capacity limit.',
-                '## 2. Model and justification\nLogistic Regression provides a fast, interpretable baseline for numeric demand, weather and calendar features. Standardization and regularization limit scale effects; balanced class weights address unequal class frequencies. A shallow Decision Tree tests nonlinear interactions without deep learning. Validation chooses alert cutoffs; the test period is untouched during fitting and selection. Class-weighted outputs are alert scores, not established calibrated probabilities.',
-                f'## 3. Coding\nThe notebook contains the full pipeline. Current and historical features only; one-hour embargo at split boundaries. Missing demand is not interpolated, and incomplete feature/target windows are excluded. Weather imputation and scaling are learned only from training data. Training-derived IQR fences and sharp five-minute jumps flag unusual demand for review; genuine peaks are retained. Input: {path.name}.',
-                f'## 4. Results\nRaw records: {len(raw):,}; usable examples: {len(frame):,}; missing demand slots: {quality["missing_demand_intervals"]:,}. Peak threshold: {threshold:.2f} native source units. Enhanced Logistic Regression test F1: {full.f1:.3f}; sensitivity: {full.recall_sensitivity:.3f}; specificity: {full.specificity:.3f}. Tables, confusion matrix, ROC/PR curves, quarterly results and day-block uncertainty are exported. Specificity = TN/(TN+FP), sensitivity = TP/(TP+FN).',
-                f'## 5. Inference and what-if analysis\nEnhanced-model F1 minus persistence F1: {full.f1 - persistence.f1:+.3f}. Weather-model F1 minus demand/calendar model F1: {full.f1 - no_weather.f1:+.3f}; a negative difference means the added weather features did not help on this holdout. On timestamps currently below the peak threshold, sensitivity is {advance_main.recall_sensitivity:.3f}. This subset measures advance warning. Lower alert cutoffs trade false alarms against missed peaks; higher demand thresholds change event prevalence, and the policy table does not retrain models. Temperature scenarios show conditional score sensitivity, not causal effects. Three historical rolling backtests use expanding training, a separate 30-day tuning period and 90-day evaluation windows within the training era; these do not choose the final model. Quarterly results expose seasonal weakness; one chronological holdout and approximate day-block intervals do not prove deployment reliability. Demand units and weather timestamp availability must be confirmed before operational use.',
-                f'## 6. URL of implementation\n{cfg["implementation_url"]}\nThis Colab URL opens the GitHub notebook. For a Kaggle submission, replace implementation_url with the saved Kaggle notebook URL and run again.']
+                f'## 1. Problem statement\nAt each observed five-minute timestamp, predict whether any demand reading in the following hour exceeds the training-period {cfg["peak_quantile"]:.0%} demand quantile. This experimental warning supports Delhi grid planning; the percentile is not an operator capacity limit.',
+                '## 2. Model and justification\nEBM is an interpretable additive boosted-tree classifier: it learns nonlinear feature effects plus two prespecified interactions (current demand with recent change, and temperature with humidity). It uses all eligible training rows, 64 main-effect bins and a bounded number of boosting rounds for speed. Internal random validation/early stopping are disabled to preserve the time-based design; a separate chronological validation period selects the alert cutoff. Balanced training weights address class imbalance. LR, a shallow Decision Tree and three historical baselines remain comparisons. These are established methods, not a new algorithm.',
+                '## 3. Coding\nAll executable code is embedded in this Kaggle notebook. Training-only fitting, chronological 70/15/15 splits and one-hour embargoes protect target windows. Missing demand is not interpolated, and incomplete windows are excluded. EBM handles missing weather directly; baseline imputation/scaling are learned from training data. Unusual demand is flagged, not automatically removed.',
+                f'## 4. Results\nRaw records: {len(raw):,}; usable examples: {len(frame):,}; missing slots: {quality["missing_demand_intervals"]:,}. Peak threshold: {threshold:.2f} native source units. Test EBM F1: {full.f1:.3f}; sensitivity: {full.recall_sensitivity:.3f}; specificity: {full.specificity:.3f}. Tables and charts include baselines, example predictions, per-1,000 error rates, advance-warning evaluation, quarterly performance, rolling backtests, confidence intervals and learned EBM effects.',
+                '## 5. Inference and what-if analysis\n' + inference]
     finish_report(out, cfg, sections, {'Model comparison': comparison, 'Advance warning': advance_table, 'Quarterly performance': periods, 'Historical backtests': backtests, 'Data quality': quality_table}, timings, start)
-    return {'quality': quality, 'comparison': comparison, 'advance': advance_table, 'timings': timings, 'threshold': threshold, 'splits': (train, valid, test), 'model': model}
+    return {'quality': quality, 'comparison': comparison, 'advance': advance_table, 'timings': timings, 'threshold': threshold, 'splits': (train, valid, test), 'model': model, 'inference': inference}

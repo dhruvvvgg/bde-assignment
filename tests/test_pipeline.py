@@ -55,6 +55,44 @@ class PipelineChecks(unittest.TestCase):
             self.assertTrue(profiles.sharp_drop_fraction.eq(0).all())
             self.assertTrue(np.allclose(profiles.return_volatility, np.std([0, .05], ddof=1)))
 
+    def test_three_commodities_keep_separate_daily_prices(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rows = [{'State': 'A', 'District': 'D', 'Market': 'M', 'Commodity': commodity, 'Arrival_Date': '2022-01-01', 'Modal_Price': price, 'Min_Price': price - 10, 'Max_Price': price + 10, 'Variety': 'V', 'Grade': 'FAQ'} for commodity, price in [('Onion', 100), ('Potato', 200), ('Tomato', 300)]]
+            path = root / '2022.csv'
+            pd.DataFrame(rows).to_csv(path, index=False)
+            cfg = {'start_date': '2022-01-01', 'end_date': '2022-12-31', 'commodities': ['Onion', 'Potato', 'Tomato'], 'chunksize': 2}
+            daily, manifest, audit = namespace['stream_mandi']([path], cfg, root / 'out')
+            self.assertEqual(daily.set_index('commodity').price.to_dict(), {'Onion': 100, 'Potato': 200, 'Tomato': 300})
+            self.assertEqual(manifest.raw_rows_scanned.sum(), 3)
+            self.assertEqual(audit['retained_unique_raw_rows'], 3)
+
+    def test_gmm_soft_memberships_and_bic_selection(self):
+        rng = np.random.default_rng(42)
+        features = ['price_cv', 'return_volatility', 'sharp_drop_fraction', 'monthly_variation_cv', 'median_relative_spread']
+        x = np.vstack([rng.normal(.3, .04, (60, 5)), rng.normal(.8, .06, (60, 5))])
+        profiles = pd.DataFrame(x, columns=features)
+        cfg = {'max_clusters': 3, 'min_cluster_fraction': .02, 'clip_quantile': .01}
+        model, _, transformed, _, _, selection, _, _ = namespace['cluster_profiles'](profiles, cfg)
+        memberships = model.predict_proba(transformed)
+        self.assertTrue(np.allclose(memberships.sum(axis=1), 1))
+        feasible = selection.loc[selection.converged & selection.meets_minimum_cluster_size & selection.silhouette_hard_assignments.notna()]
+        self.assertAlmostEqual(model.bic(transformed), feasible.BIC.min())
+        self.assertTrue(model.converged_)
+
+    def test_notebook_sections_once_and_no_runtime_repository_access(self):
+        for path in (ROOT / 'notebooks').glob('*.ipynb'):
+            doc = json.loads(path.read_text())
+            markdown = '\n'.join(''.join(c['source']) for c in doc['cells'] if c['cell_type'] == 'markdown')
+            code = '\n'.join(''.join(c['source']) for c in doc['cells'] if c['cell_type'] == 'code')
+            for point in range(1, 6):
+                self.assertEqual(markdown.count(f'## {point}. '), 1)
+            self.assertNotIn('## 6.', markdown)
+            for forbidden in ['co' + 'lab', 'implementation' + '_url', 'kagglehub', 'git clone']:
+                self.assertNotIn(forbidden, path.read_text().lower())
+            self.assertNotIn("display(Markdown((Path(CONFIG['output_dir'])", code)
+            self.assertEqual(code.count("display(Markdown(RESULTS['inference']))"), 1)
+
     def test_notebooks_embed_current_sources_and_compile(self):
         for task, name in [('electricity', '01_delhi_peak_classification.ipynb'), ('mandi', '02_mandi_price_clustering.ipynb')]:
             doc = json.loads((ROOT / 'notebooks' / name).read_text())

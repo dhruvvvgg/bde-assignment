@@ -1,36 +1,62 @@
 # Validation on real public data
 
-Both standalone notebooks executed all code cells in order on 4 October 2026. No synthetic records were used for reported model results. The command-line notebook runner only overrides input/output locations for the local environment.
+Both final standalone notebooks executed every code cell in order on **5 October 2026**, using real attached-format public data. The local runner overrides only the input/output folders. Synthetic fixtures are used only in regression tests, never for reported results.
 
-| Pipeline | Data processed | Complete notebook wall time on local CPU |
+| Pipeline | Data processed | Complete notebook wall time, local CPU |
 |---|---|---|
-| Delhi classification | 393,440 raw records; 307,441 complete examples; 46,117 final-test observations | 16.39 seconds |
-| Mandi clustering | 14,437,080 raw rows across 2022–2024 Parquet files; 622,885 valid unique onion rows; 606 eligible profiles | 22.22 seconds |
+| Delhi EBM classification | 393,440 raw records; 307,441 complete examples; 215,196 training rows; 46,117 final-test rows | 71.64 seconds |
+| Three-commodity GMM clustering | 14,437,080 raw rows scanned once; 1,829,255 retained unique records; 1,750 eligible profiles | 70.09 seconds |
 
-The total measured computation/execution was approximately 39 seconds. Files were already downloaded. These timings include imports, charts, model artifacts and report/ZIP packaging, but exclude dataset download and notebook-session startup. The runs overlapped locally; these are observations, not hardware-normalized benchmarks. Kaggle CPU, storage, software and workload differ. Allow roughly 1–3 minutes per notebook with data already attached; a T4 does not accelerate these CPU models.
+The sum of these wall times is approximately **2 minutes 22 seconds**. The two runs overlapped locally; this sum is not a benchmark of sequential execution. Files and dependencies were already present. Timings include imports, charts and report/ZIP exports, but exclude data download, session startup and package installation. Allow roughly **2–5 minutes per notebook on Kaggle**, with attached data; actual CPU/storage load varies. T4 selection does not accelerate these CPU models.
+
+An initial local EBM attempt encountered a joblib worker/psutil process-discovery failure. The final EBM uses `n_jobs=1` with a single bag, avoiding unnecessary child-process creation. The final complete run passed with that configuration.
 
 ## Classification findings
 
-Weather-enhanced Logistic Regression: test F1 0.9648, sensitivity 0.9688, specificity 0.9775. Persistence: F1 0.9409. On observations currently below the peak threshold, enhanced-model F1 is 0.7030 and sensitivity is 0.7197.
+| Model | Final-test F1 | Sensitivity | Specificity |
+|---|---|---|---|
+| EBM: main model | 0.9635 | 0.9607 | 0.9809 |
+| Logistic Regression: demand/calendar | 0.9658 | 0.9677 | 0.9793 |
+| Logistic Regression: weather enhanced | 0.9648 | 0.9688 | 0.9775 |
+| Persistence | 0.9409 | 0.8931 | 0.9970 |
 
-Demand/calendar-only Logistic Regression achieved slightly better test F1 (0.9658). Weather improved validation F1 slightly but did not improve final-test F1. The result should not be described as a demonstrated benefit of adding weather. The enhanced model was specified before inspecting the test results. Alert cutoffs use validation data only.
+EBM improves F1 over persistence but **does not improve F1 over either LR baseline** on this test period. Its justification is readable nonlinear effects and prespecified interactions, not a claim of universally superior performance. It was specified as the main model before test evaluation.
 
-There are 21,569 missing five-minute demand slots. They are not interpolated. The classifier is a historical experiment with a percentile-based peak proxy; operational threshold, data availability and source units need confirmation. High overall scores partly reflect persistence of already-high demand, which is why advance-warning-only results are also reported.
+When current demand is below the peak threshold, EBM F1 is **0.6897**, sensitivity **0.6801** and specificity **0.9821**. This is the more demanding advance-warning subset; overall scores partly reflect persistent already-high demand. Three historical expanding-window EBM checks passed, with F1 approximately 0.9495, 0.9331 and 0.9655.
+
+The data contain 21,569 missing five-minute demand slots; these are not interpolated. Alert cutoffs use chronological validation only; peak definitions and feature fitting use training data only. One-hour split embargo assertions passed. Balanced scores are not demonstrated calibrated probabilities. Learned effects and temperature scenarios are associations/sensitivities, not causal evidence. Demand units, an operational peak limit and historical weather availability still need confirmation for deployment.
 
 ## Clustering findings
 
-K-means chose two behavior groups: 157 profiles with greater daily volatility/drop frequency and 449 with lower values. Silhouette is 0.4379. Mean ARI under 80% subsampling is 0.8874. Adding log mean price yields ARI 0.9380 relative to behavior-only grouping.
+All selected main GMMs converged, satisfied the minimum hard-group size and used full covariance. Each commodity has separately fitted clipping/scaling/model parameters.
 
-Important sensitivity: removing profile winsorization produces ARI 0.0123 relative to the main grouping. Extreme profiles dominate that alternative solution; its high silhouette is not evidence of useful market groups. The notebook exports extreme profiles, unclipped cluster sizes and this sensitivity result. The main groups should be presented as dependent on the documented outlier treatment, not universally robust economic categories.
+| Commodity | Retained daily records | Eligible profiles | Components | Hard-label silhouette | Mean converged subsampling ARI | Membership below 0.65 |
+|---|---|---|---|---|---|---|
+| Onion | 622,885 | 606 | 6 | 0.0707 | 0.6524 | 8.75% |
+| Potato | 621,863 | 576 | 4 | 0.1141 | 0.6875 | 7.29% |
+| Tomato | 584,507 | 568 | 4 | 0.1382 | 0.5561 | 10.74% |
 
-Classification specificity and accuracy do not apply to this unlabeled clustering task. Its metrics describe geometric separation and reproducibility, not confirmed economic ground truth.
+These are **overlapping descriptive behavior groups**, not strongly separated or economically verified categories. BIC selects probabilistic fits; the relatively low hard-label silhouettes and moderate ARI should be presented honestly. GMM membership confidence measures fitted overlap, not future price risk.
+
+Outlier treatment matters. ARI relative to the main 1% clipping fit:
+
+| Commodity | No clipping | 2% clipping | Add log mean price |
+|---|---|---|---|
+| Onion | 0.3874 | 0.6890 | 0.4745 |
+| Potato | 0.4315 | 0.6741 | 0.5349 |
+| Tomato | 0.7548 | 0.3805 | 0.6189 |
+
+Unclipped onion/potato solutions create hard groups with only two profiles and do not satisfy the main selection constraint; they remain explicit diagnostic alternatives. Group descriptions use medians, and extreme profiles are exported for review. There were 3,725 known inconsistent-price rows removed across the three commodities. No commodity was silently skipped.
+
+Classification accuracy/specificity cannot be computed meaningfully for unlabeled clustering. Commodity group IDs and BIC are not cross-commodity rankings. Calendar coverage includes non-trading days; quantities, transport costs and farmer-level selling prices are not modeled.
 
 ## Verification
 
-- Five regression tests passed: specificity calculation, future-feature leakage, gap-crossing target exclusion, inconsistent mandi price removal/consecutive-day returns, and notebook-source synchronization/compilation.
-- Both notebooks passed nbformat schema validation.
-- The complete notebook pipelines passed on the real Delhi CSV and real 2022, 2023 and 2024 mandi Parquet files.
-- Classification split embargo assertions passed.
-- Representative classification and clustering charts were visually inspected.
+- Eight regression tests passed: specificity; future-feature leakage; gap-crossing target exclusion; price consistency/consecutive-day returns; commodity-preserving aggregation; GMM posterior normalization/BIC selection; single notebook section display/no repository runtime dependency; embedded-source synchronization/compilation.
+- Both notebooks passed nbformat schema validation and complete real-data execution.
+- Classification split embargo assertions passed; all three historical backtests executed.
+- Each notebook has sections 1–5 exactly once in its Markdown cells. Report-writing helpers export the full report without displaying it again; the inference cell displays only the inference text. No implementation-link section or platform fallback remains.
+- Generated HTML chart paths resolve, including nested commodity folders.
+- Representative EBM learned effects and GMM selection/projection charts were visually checked.
 
-The CSVs, charts and generated assignment reports under `validation/` are example outputs from these runs. Data/model binaries are not committed. Run All regenerates your own outputs using the attached inputs and your CONFIG.
+Selected current-run CSVs, PNGs and reports under `validation/` replace the earlier LR/onion-only examples. Dataset files and model binaries are not committed. Kaggle Run All regenerates complete outputs from its attached datasets.
